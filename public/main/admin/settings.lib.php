@@ -1,0 +1,3106 @@
+<?php
+/* For licensing terms, see /license.txt */
+
+use Chamilo\CoreBundle\Entity\Asset;
+use Chamilo\CoreBundle\Entity\Course;
+use Chamilo\CoreBundle\Entity\Plugin as PluginEntity;
+use Chamilo\CoreBundle\Entity\SystemTemplate;
+use Chamilo\CoreBundle\Enums\ActionIcon;
+use Chamilo\CoreBundle\Enums\ObjectIcon;
+use Chamilo\CoreBundle\Enums\StateIcon;
+use Chamilo\CoreBundle\Framework\Container;
+use ChamiloSession as Session;
+use Symfony\Component\Filesystem\Filesystem;
+
+/**
+ * Library of the settings.php file.
+ *
+ * @author Julio Montoya <gugli100@gmail.com>
+ * @author Guillaume Viguier <guillaume@viguierjust.com>
+ *
+ * @since Chamilo 1.8.7
+ */
+define('CSS_UPLOAD_PATH', api_get_path(SYMFONY_SYS_PATH).'var/themes/');
+
+/**
+ * Safely read plugin metadata for the Regions page.
+ */
+function plugin_get_region_metadata(string $pluginName): array
+{
+    $pluginInfoFile = api_get_path(SYS_PLUGIN_PATH).$pluginName.'/plugin.php';
+    $plugin_info = [];
+
+    if (is_file($pluginInfoFile)) {
+        try {
+            require $pluginInfoFile;
+        } catch (\Throwable $e) {
+            error_log('[regions] failed to read '.$pluginName.' metadata: '.$e->getMessage());
+            $plugin_info = [];
+        }
+    }
+
+    return [
+        'title' => (string) ($plugin_info['title'] ?? $plugin_info['name'] ?? $pluginName),
+        'version' => (string) ($plugin_info['version'] ?? '0.0.0'),
+        'comment' => (string) ($plugin_info['comment'] ?? ''),
+        'is_admin_plugin' => !empty($plugin_info['is_admin_plugin']),
+        'is_course_plugin' => !empty($plugin_info['is_course_plugin']),
+    ];
+}
+
+/**
+ * This function allows easy activating and inactivating of regions.
+ *
+ * @author Julio Montoya <gugli100@gmail.com> Beeznest 2012
+ */
+function handleRegions()
+{
+    if (isset($_POST['submit_plugins'])) {
+        storeRegions();
+
+        $user_id = api_get_user_id();
+        $category = $_GET['category'];
+        Event::addEvent(
+            LOG_CONFIGURATION_SETTINGS_CHANGE,
+            LOG_CONFIGURATION_SETTINGS_CATEGORY,
+            $category,
+            api_get_utc_datetime(),
+            $user_id
+        );
+
+        echo Display::return_message(get_lang('The settings have been stored'), 'confirmation');
+    }
+
+    $pluginObj = new AppPlugin();
+    $installedPlugins = $pluginObj->getInstalledPlugins();
+    $selectedPluginName = isset($_GET['name']) ? (string) $_GET['name'] : '';
+    $selectedPluginHasNoRegions = '' !== $selectedPluginName
+        && plugin_has_no_regions($selectedPluginName);
+
+    echo '<div class="mb-6 flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">';
+    echo '  <div>';
+    echo '      <h2 class="mb-1 text-2xl font-semibold text-gray-90">'.get_lang('Plugin regions').'</h2>';
+    echo '      <p class="text-body-2 text-gray-50">'.get_lang('Choose where each installed plugin should be rendered.').'</p>';
+    echo '      <p class="mt-1 text-caption text-gray-50">'.get_lang('Tip: use Ctrl/Cmd to select multiple regions.').'</p>';
+    echo '  </div>';
+    echo '  <div class="flex flex-wrap gap-2">';
+    echo '      <a href="'.htmlspecialchars(api_get_self().'?category=Plugins', ENT_QUOTES).'" class="btn btn--plain-outline btn--sm">';
+    echo '          <i class="mdi mdi-puzzle-outline"></i> '.get_lang('Plugins');
+    echo '      </a>';
+    echo '      <button class="btn btn--success btn--sm" type="submit" form="plugin-regions-form" name="submit_plugins">';
+    echo '          <i class="mdi mdi-content-save-outline"></i> '.get_lang('Save settings');
+    echo '      </button>';
+    echo '  </div>';
+    echo '</div>';
+
+    if (empty($installedPlugins)) {
+        echo Display::return_message(get_lang('No installed plugins were found.'), 'warning', false);
+
+        return;
+    }
+
+    if ($selectedPluginHasNoRegions) {
+        echo Display::return_message(get_lang('This plugin does not use regions.'), 'info', false);
+    }
+
+    echo '<form id="plugin-regions-form" name="plugins" method="post" action="'.api_get_self().'?category='.Security::remove_XSS($_GET['category']).'">';
+    echo '<div class="space-y-4">';
+
+    $renderedPlugins = 0;
+
+    foreach ($installedPlugins as $pluginName) {
+        if (plugin_has_no_regions($pluginName)) {
+            continue;
+        }
+
+        $metadata = plugin_get_admin_metadata($pluginName);
+
+        $renderedPlugins++;
+
+        $pluginTitle = htmlspecialchars($metadata['title'], ENT_QUOTES);
+        $pluginVersion = htmlspecialchars($metadata['version'], ENT_QUOTES);
+        $pluginComment = plugin_render_comment_preview((string) $metadata['comment']);
+        $selectedRegions = plugin_get_assigned_regions_safe($pluginName);
+        $regionOptions = plugin_get_available_region_options($metadata, $pluginName);
+        $pluginUrl = plugin_get_management_url($pluginName) ?? plugin_get_plugins_admin_url($pluginName);
+
+        $isSelectedPlugin = $selectedPluginName === $pluginName;
+        $cardId = plugin_get_regions_card_id($pluginName);
+
+        $cardClasses = 'rounded-2xl border bg-white p-5 shadow-sm transition hover:shadow-md';
+        $cardClasses .= $isSelectedPlugin
+            ? ' border-primary'
+            : ' border-gray-25';
+
+        echo '<article id="'.htmlspecialchars($cardId, ENT_QUOTES).'" class="'.$cardClasses.'" style="scroll-margin-top: 110px;">';
+        echo '  <div class="grid gap-5 xl:grid-cols-[minmax(0,1fr)_420px]">';
+        echo '      <div class="min-w-0">';
+        echo '          <div class="flex flex-wrap items-center gap-2">';
+        echo '              <h3 class="mb-0 text-lg font-semibold text-gray-90">'.$pluginTitle.'</h3>';
+        echo '              <span class="badge badge--default">v'.$pluginVersion.'</span>';
+        echo '          </div>';
+        echo '          <div class="mt-2 flex flex-wrap gap-2">';
+        echo                plugin_render_scope_badges($metadata);
+        echo '          </div>';
+
+        if ('' !== $pluginComment) {
+            echo $pluginComment;
+        }
+
+        echo '          <div class="mt-4">';
+        echo '              <div class="mb-2 text-caption font-semibold uppercase tracking-wide text-gray-50">Assigned regions</div>';
+        echo '              <div class="flex flex-wrap gap-2">'.plugin_render_region_badges($selectedRegions).'</div>';
+        echo                    plugin_render_region_descriptions($selectedRegions);
+        echo '          </div>';
+
+        echo '          <div class="mt-4 flex flex-wrap gap-2">';
+        echo '              <a href="'.htmlspecialchars($pluginUrl, ENT_QUOTES).'" class="btn btn--plain-outline btn--sm">';
+        echo '                  <i class="mdi mdi-arrow-left"></i> Back to plugin';
+        echo '              </a>';
+        echo '              <button class="btn btn--success btn--sm" type="submit" name="submit_plugins">';
+        echo '                  <i class="mdi mdi-content-save-outline"></i> '.get_lang('Save settings');
+        echo '              </button>';
+        echo '          </div>';
+        echo '      </div>';
+
+        echo '      <div>';
+        echo '          <div class="rounded-2xl border border-gray-25 bg-gray-10 p-4">';
+        echo '              <div class="mb-3 text-body-2 font-semibold text-gray-90">'.get_lang('Available regions').'</div>';
+
+        echo Display::select(
+            'plugin_'.$pluginName.'[]',
+            $regionOptions,
+            $selectedRegions,
+            [
+                'multiple' => 'multiple',
+                'size' => max(6, min(10, count($regionOptions) + 1)),
+                'class' => 'w-full max-w-full rounded-lg border border-gray-25 bg-white p-2 text-body-2 text-gray-90',
+            ],
+            true,
+            get_lang('none')
+        );
+
+        echo '              <p class="mt-3 text-caption text-gray-50">';
+        echo '                  '.get_lang('Select one or more regions for this plugin in the current access URL.');
+        echo '              </p>';
+        echo '          </div>';
+        echo '      </div>';
+        echo '  </div>';
+        echo '</article>';
+    }
+
+    if (0 === $renderedPlugins) {
+        echo Display::return_message(get_lang('No plugins with regions were found.'), 'info', false);
+    }
+
+    echo '</div>';
+
+    echo '<div class="mt-6 flex justify-end">';
+    echo '  <button class="btn btn--success" type="submit" name="submit_plugins">';
+    echo '      <i class="mdi mdi-content-save-outline"></i> '.get_lang('Save settings');
+    echo '  </button>';
+    echo '</div>';
+
+    echo '</form>';
+
+    if ('' !== $selectedPluginName && !$selectedPluginHasNoRegions) {
+        $selectedCardId = plugin_get_regions_card_id($selectedPluginName);
+        $selectedCardIdJs = json_encode($selectedCardId);
+        $selectedHashJs = json_encode('#'.$selectedCardId);
+
+        echo <<<JS
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    var targetId = {$selectedCardIdJs};
+    var targetHash = {$selectedHashJs};
+    var attempts = 0;
+    var maxAttempts = 12;
+
+    function focusSelectedCard() {
+        var card = document.getElementById(targetId);
+
+        if (!card) {
+            attempts++;
+            if (attempts < maxAttempts) {
+                window.setTimeout(focusSelectedCard, 250);
+            }
+            return;
+        }
+
+        if (window.location.hash !== targetHash && window.history && window.history.replaceState) {
+            window.history.replaceState(null, '', targetHash);
+        }
+
+        card.scrollIntoView({
+            behavior: 'smooth',
+            block: 'start'
+        });
+
+        card.classList.add('shadow-md');
+
+        window.setTimeout(function () {
+            card.classList.remove('shadow-md');
+        }, 1800);
+    }
+
+    focusSelectedCard();
+    window.setTimeout(focusSelectedCard, 400);
+    window.setTimeout(focusSelectedCard, 900);
+});
+</script>
+JS;
+    }
+}
+
+function handleExtensions()
+{
+    echo Display::page_subheader(get_lang('Configure extensions'));
+    echo '<a class="btn btn--success" href="configure_extensions.php?display=ppt2lp" role="button">'.get_lang('Chamilo RAPID').'</a>';
+}
+
+/**
+ * Return the first readable README file path for a plugin.
+ */
+function plugin_get_readme_path(string $pluginName): ?string
+{
+    static $cache = [];
+
+    if (array_key_exists($pluginName, $cache)) {
+        return $cache[$pluginName];
+    }
+
+    $basePath = rtrim(api_get_path(SYS_PLUGIN_PATH).$pluginName, '/').'/';
+    $candidates = [
+        'README.md',
+        'Readme.md',
+        'readme.md',
+        'README.MD',
+    ];
+
+    foreach ($candidates as $candidate) {
+        $fullPath = $basePath.$candidate;
+        if (is_file($fullPath) && is_readable($fullPath)) {
+            return $cache[$pluginName] = $fullPath;
+        }
+    }
+
+    return $cache[$pluginName] = null;
+}
+
+/**
+ * Check whether the plugin exposes a README file.
+ */
+function plugin_has_readme(string $pluginName): bool
+{
+    return null !== plugin_get_readme_path($pluginName);
+}
+
+/**
+ * Return the plugin folder names allowed in the stable plugins list.
+ */
+function getStablePluginAllowList(): array
+{
+    return [
+        'Bbb',
+        'BuyCourses',
+        'CardGame',
+        'CStudio',
+        'H5pImport',
+        'ImsLti',
+        'LtiProvider',
+        'Onlyoffice',
+        'PauseTraining',
+        'Pens',
+        'Positioning',
+        'Test2Pdf',
+        'Tour',
+        'XApi',
+        'ExerciseFocused',
+        'ExerciseMonitoring',
+        'Zoom',
+        'MaintenanceMode',
+        'Redirection',
+        'TopLinks',
+        'ExternalNotificationConnect',
+        'CourseHomeNotify',
+        'CourseLegal',
+        'Static',
+        'ShowUserInfo',
+        'StudentFollowUp',
+        'LearningCalendar',
+        'SurveyExportCsv',
+        'SurveyExportTxt',
+        'UserRemoteService',
+        'MigrationMoodle',
+        'EmbedRegistry',
+        'SearchCourse',
+        'Rss',
+        'Dictionary',
+        'GoogleMaps',
+        'BeforeLogin',
+        'CourseBlock',
+        'CustomFooter',
+        'CustomCertificate',
+        'NoSearchIndex',
+        'NotebookTeacher',
+        'Justification',
+        'QuestionOptionsEvaluation',
+        'ExerciseSignature',
+        'GradingElectronic',
+        'CheckExtraFieldAuthorCompany',
+        'CleanDeletedFiles',
+        'Dashboard',
+        'ExtraMenuFromWebservice',
+        'Mobidico',
+        'ShowRegions',
+        'HelloWorld',
+        'ExtAuthChamiloLogoutButtonBehaviour',
+        'Resubscription',
+    ];
+}
+
+/**
+ * Allow administrators to temporarily display every plugin from the URL.
+ */
+function shouldShowAllPlugins(): bool
+{
+    return isset($_GET['show_all_plugins']) && '1' === (string) $_GET['show_all_plugins'];
+}
+
+/**
+ * Check whether a plugin should be visible in the stable plugins list.
+ */
+function pluginShouldBeVisibleInStableList(string $pluginName): bool
+{
+    static $allowedPlugins = null;
+
+    if (null === $allowedPlugins) {
+        $allowedPlugins = array_flip(getStablePluginAllowList());
+    }
+
+    return isset($allowedPlugins[$pluginName]);
+}
+
+/**
+ * Check whether a plugin is installed or enabled in the current access URL.
+ */
+function plugin_is_installed_or_enabled(array $pluginRow): bool
+{
+    $plugin = $pluginRow['plugin'] ?? null;
+
+    if (!$plugin instanceof PluginEntity) {
+        return false;
+    }
+
+    if ($plugin->isInstalled()) {
+        return true;
+    }
+
+    $configuration = $plugin->getConfigurationsByAccessUrl(Container::getAccessUrlUtil()->getCurrent());
+
+    return null !== $configuration && $configuration->isActive();
+}
+
+/**
+ * Hide pending plugins by default while keeping verified and already installed plugins visible.
+ */
+function plugin_should_be_visible_in_current_admin_view(array $pluginRow): bool
+{
+    if (shouldShowAllPlugins()) {
+        return true;
+    }
+
+    if (!empty($pluginRow['is_stable'])) {
+        return true;
+    }
+
+    return plugin_is_installed_or_enabled($pluginRow);
+}
+
+/**
+ * Build a URL that temporarily shows every plugin.
+ */
+function plugin_get_show_all_plugins_url(): string
+{
+    return api_get_self().'?'.http_build_query([
+            'category' => 'Plugins',
+            'plugin_tab' => plugin_get_selected_tab(),
+            'show_all_plugins' => 1,
+        ]);
+}
+
+/**
+ * Build a URL that returns to the verified plugins view.
+ */
+function plugin_get_verified_plugins_url(): string
+{
+    return api_get_self().'?'.http_build_query([
+            'category' => 'Plugins',
+            'plugin_tab' => plugin_get_selected_tab(),
+        ]);
+}
+
+/**
+ * Tell whether a plugin should be hidden from the Regions UI.
+ */
+function plugin_has_no_regions(string $pluginName): bool
+{
+    return in_array($pluginName, ['Onlyoffice'], true);
+}
+
+/**
+ * Read plugin metadata in a safe way for admin UIs.
+ */
+function plugin_get_admin_metadata(string $pluginName): array
+{
+    static $cache = [];
+
+    if (array_key_exists($pluginName, $cache)) {
+        return $cache[$pluginName];
+    }
+
+    $pluginInfoFile = api_get_path(SYS_PLUGIN_PATH).$pluginName.'/plugin.php';
+    $plugin_info = [];
+
+    if (is_file($pluginInfoFile)) {
+        try {
+            require $pluginInfoFile;
+        } catch (\Throwable $e) {
+            error_log('[plugins.admin] failed to read '.$pluginName.' metadata: '.$e->getMessage());
+            $plugin_info = [];
+        }
+    }
+
+    return $cache[$pluginName] = [
+        'title' => (string) ($plugin_info['title'] ?? $plugin_info['name'] ?? $pluginName),
+        'version' => (string) ($plugin_info['version'] ?? '0.0.0'),
+        'comment' => (string) ($plugin_info['comment'] ?? ''),
+        'source' => (string) ($plugin_info['source'] ?? ''),
+        'commercial_model' => (string) (
+            $plugin_info['commercial_model']
+            ?? $plugin_info['business_model']
+            ?? $plugin_info['pricing']
+            ?? $plugin_info['license_model']
+            ?? ''
+        ),
+        'is_commercial' => !empty($plugin_info['commercial']),
+        'is_admin_plugin' => !empty($plugin_info['is_admin_plugin']),
+        'is_course_plugin' => !empty($plugin_info['is_course_plugin']),
+    ];
+}
+
+/**
+ * Return the origin stored for the plugin in the C2 plugin entity.
+ */
+function plugin_get_source_value(string $pluginName, ?PluginEntity $plugin): string
+{
+    $source = null !== $plugin ? $plugin->getSource() : '';
+
+    if ('' === trim((string) $source)) {
+        $source = AppPlugin::isOfficial($pluginName)
+            ? PluginEntity::SOURCE_OFFICIAL
+            : PluginEntity::SOURCE_THIRD_PARTY;
+    }
+
+    $source = strtolower(trim((string) $source));
+
+    if (PluginEntity::SOURCE_OFFICIAL === $source) {
+        return PluginEntity::SOURCE_OFFICIAL;
+    }
+
+    return PluginEntity::SOURCE_THIRD_PARTY;
+}
+
+/**
+ * Return the commercial model for a plugin.
+ *
+ * Plugins can define it explicitly in plugin.php using one of these optional keys:
+ * commercial_model, business_model, pricing or license_model.
+ * Values recognized: free, freemium, commercial_service, commercial.
+ */
+function plugin_get_commercial_model(string $pluginName, array $metadata): string
+{
+    $value = strtolower(trim((string) ($metadata['commercial_model'] ?? '')));
+    $value = str_replace(['-', ' '], '_', $value);
+
+    if (!empty($metadata['is_commercial']) && '' === $value) {
+        $value = 'commercial';
+    }
+
+    return match ($value) {
+        'freemium' => 'freemium',
+        'commercial_service', 'commercial_services', 'service', 'service_backed' => 'commercial_service',
+        'commercial', 'paid', 'premium' => 'commercial',
+        default => 'free',
+    };
+}
+
+/**
+ * Return a human-readable commercial model label.
+ */
+function plugin_get_commercial_model_label(string $model): string
+{
+    return match ($model) {
+        'freemium' => get_lang('Freemium'),
+        'commercial_service' => get_lang('Commercial service'),
+        'commercial' => get_lang('Commercial'),
+        default => get_lang('100% free'),
+    };
+}
+
+/**
+ * Return a badge for plugin source.
+ */
+function plugin_render_source_badge(string $source): string
+{
+    if (PluginEntity::SOURCE_OFFICIAL === $source) {
+        return '<span class="badge badge--success">'.get_lang('Official').'</span>';
+    }
+
+    return '<span class="badge badge--warning">'.get_lang('Third party').'</span>';
+}
+
+/**
+ * Return a badge for plugin commercial model.
+ */
+function plugin_render_commercial_badge(string $model): string
+{
+    $label = plugin_get_commercial_model_label($model);
+    $baseClasses = 'inline-flex w-fit items-center rounded-full px-3 py-1 text-xs font-semibold';
+
+    return match ($model) {
+        'freemium' => '<span class="'.$baseClasses.' bg-info/10 text-info">'.$label.'</span>',
+        'commercial_service' => '<span class="'.$baseClasses.' bg-warning/10 text-warning-dark">'.$label.'</span>',
+        'commercial' => '<span class="'.$baseClasses.' bg-danger/10 text-danger">'.$label.'</span>',
+        default => '<span class="'.$baseClasses.' bg-success/10 text-success">'.$label.'</span>',
+    };
+}
+
+/**
+ * Return the plugin tab requested by the administrator.
+ */
+function plugin_get_selected_tab(): string
+{
+    $tab = strtolower(trim((string) ($_GET['plugin_tab'] ?? 'included')));
+
+    return in_array($tab, ['included', 'commercial', 'all'], true) ? $tab : 'included';
+}
+
+/**
+ * Build a URL to the plugin admin page with a tab selected.
+ */
+function plugin_get_tab_url(string $tab): string
+{
+    return api_get_self().'?'.http_build_query([
+            'category' => 'Plugins',
+            'plugin_tab' => $tab,
+        ]);
+}
+
+/**
+ * Render one tab of the plugin list.
+ */
+function plugin_render_admin_tab(string $tab, string $label, int $count, string $selectedTab): string
+{
+    $isActive = $tab === $selectedTab;
+    $classes = $isActive
+        ? 'border-primary bg-primary text-white'
+        : 'border-gray-25 bg-white text-gray-90 hover:border-primary hover:text-primary';
+
+    return '<a href="'.htmlspecialchars(plugin_get_tab_url($tab), ENT_QUOTES).'" class="inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-semibold transition '.$classes.'">'
+        .htmlspecialchars($label, ENT_QUOTES)
+        .'<span class="rounded-full bg-white/20 px-2 py-0.5 text-xs">'.$count.'</span>'
+        .'</a>';
+}
+
+/**
+ * Decide whether a plugin belongs to the selected tab.
+ */
+function plugin_matches_admin_tab(array $pluginRow, string $selectedTab): bool
+{
+    if ('commercial' === $selectedTab) {
+        return 'free' !== $pluginRow['commercial_model'];
+    }
+
+    if ('all' === $selectedTab) {
+        return true;
+    }
+
+    return !empty($pluginRow['is_stable']) && 'free' === $pluginRow['commercial_model'];
+}
+
+/**
+ * Build plugin rows with metadata used by the admin UI.
+ */
+function plugin_get_admin_rows(array $allPlugins): array
+{
+    $pluginRepo = Container::getPluginRepository();
+    $rows = [];
+
+    foreach ($allPlugins as $pluginName) {
+        $pluginInfoFile = api_get_path(SYS_PLUGIN_PATH).$pluginName.'/plugin.php';
+        if (!file_exists($pluginInfoFile)) {
+            continue;
+        }
+
+        $metadata = plugin_get_admin_metadata($pluginName);
+        $plugin = $pluginRepo->findOneByTitle($pluginName);
+        $source = plugin_get_source_value($pluginName, $plugin);
+        $commercialModel = plugin_get_commercial_model($pluginName, $metadata);
+
+        $rows[] = [
+            'name' => $pluginName,
+            'metadata' => $metadata,
+            'plugin' => $plugin,
+            'source' => $source,
+            'commercial_model' => $commercialModel,
+            'is_stable' => pluginShouldBeVisibleInStableList($pluginName),
+            'has_no_regions' => plugin_has_no_regions($pluginName),
+            'has_readme' => plugin_has_readme($pluginName),
+        ];
+    }
+
+    return $rows;
+}
+
+
+/**
+ * Return current regions safely for a plugin in the current URL.
+ */
+function plugin_get_assigned_regions_safe(string $pluginName): array
+{
+    static $cache = [];
+
+    if (array_key_exists($pluginName, $cache)) {
+        return $cache[$pluginName];
+    }
+
+    try {
+        $pluginEntity = Container::getPluginRepository()->getInstalledByName($pluginName);
+
+        if (!$pluginEntity) {
+            return $cache[$pluginName] = [];
+        }
+
+        $currentAccessUrl = Container::getAccessUrlUtil()->getCurrent();
+        $pluginConfigurationInUrl = $pluginEntity->getConfigurationsByAccessUrl($currentAccessUrl);
+
+        if (!$pluginConfigurationInUrl) {
+            return $cache[$pluginName] = [];
+        }
+
+        $configuration = $pluginConfigurationInUrl->getConfiguration();
+        $regions = $configuration['regions'] ?? [];
+
+        if (!is_array($regions)) {
+            $regions = [];
+        }
+
+        $regions = array_values(array_unique(array_filter(array_map('strval', $regions))));
+        sort($regions);
+
+        return $cache[$pluginName] = $regions;
+    } catch (\Throwable $e) {
+        error_log('[plugins.admin] failed to read regions for '.$pluginName.': '.$e->getMessage());
+
+        return $cache[$pluginName] = [];
+    }
+}
+
+/**
+ * Return the Regions admin URL focused on one plugin.
+ */
+function plugin_get_regions_admin_url(string $pluginName): string
+{
+    return api_get_path(WEB_CODE_PATH).'admin/settings.php?'.http_build_query([
+            'category' => 'Regions',
+            'name' => $pluginName,
+        ]).'#'.plugin_get_regions_card_id($pluginName);
+}
+
+/**
+ * Return the Plugins admin URL focused on one plugin.
+ */
+function plugin_get_plugins_admin_url(string $pluginName): string
+{
+    return api_get_path(WEB_CODE_PATH).'admin/settings.php?'.http_build_query([
+            'category' => 'Plugins',
+            'name' => $pluginName,
+        ]);
+}
+
+/**
+ * Build a stable DOM id for a plugin regions card.
+ */
+function plugin_get_regions_card_id(string $pluginName): string
+{
+    $sanitized = preg_replace('/[^A-Za-z0-9_-]/', '-', $pluginName);
+
+    return 'plugin-region-card-'.$sanitized;
+}
+
+/**
+ * Render a compact status badge for the plugin list.
+ */
+function plugin_render_status_badge(bool $isInstalled, bool $isEnabled): string
+{
+    if (!$isInstalled) {
+        return '<span class="inline-flex items-center rounded-full border border-slate-200 bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700">'
+            .get_lang('Not installed')
+            .'</span>';
+    }
+
+    if ($isEnabled) {
+        return '<span class="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700">'
+            .get_lang('Enabled')
+            .'</span>';
+    }
+
+    return '<span class="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-700">'
+        .get_lang('Disabled')
+        .'</span>';
+}
+
+/**
+ * Return human-friendly labels for supported plugin regions.
+ */
+function plugin_get_region_labels(): array
+{
+    return [
+        'menu_administrator' => 'Admin menu',
+        'course_tool_plugin' => 'Course tool',
+        'content_top' => 'Above page content',
+        'content_bottom' => 'Below page content',
+        'login_top' => 'Above login form',
+        'login_bottom' => 'Below login form',
+        'main_top' => 'Top of main layout',
+        'main_bottom' => 'Bottom of main layout',
+        'pre_footer' => 'Before footer',
+        'footer_left' => 'Footer left',
+        'footer_center' => 'Footer center',
+        'footer_right' => 'Footer right',
+    ];
+}
+
+/**
+ * Return a readable label for a region name.
+ */
+function plugin_get_region_label(string $region): string
+{
+    $labels = plugin_get_region_labels();
+
+    return $labels[$region] ?? $region;
+}
+
+/**
+ * Return human-friendly descriptions for supported plugin regions.
+ */
+function plugin_get_region_descriptions(): array
+{
+    return [
+        'menu_administrator' => get_lang('Recommended for admin-only plugins shown in the administration area.'),
+        'course_tool_plugin' => get_lang('Recommended for plugins that must appear as course tools.'),
+        'content_top' => get_lang('Displayed above the main page content.'),
+        'content_bottom' => get_lang('Displayed below the main page content.'),
+        'login_top' => get_lang('Displayed above the public login form.'),
+        'login_bottom' => get_lang('Displayed below the public login form.'),
+        'main_top' => get_lang('Displayed near the top of the main layout shell.'),
+        'main_bottom' => get_lang('Displayed near the bottom of the main layout shell.'),
+        'pre_footer' => get_lang('Displayed before the footer area.'),
+        'footer_left' => get_lang('Displayed in the left footer column.'),
+        'footer_center' => get_lang('Displayed in the center footer column.'),
+        'footer_right' => get_lang('Displayed in the right footer column.'),
+    ];
+}
+
+/**
+ * Return a readable description for a region name.
+ */
+function plugin_get_region_description(string $region): string
+{
+    $descriptions = plugin_get_region_descriptions();
+
+    return $descriptions[$region] ?? get_lang('Displayed in the selected plugin region.');
+}
+
+/**
+ * Render descriptions for assigned regions.
+ */
+function plugin_render_region_descriptions(array $regions): string
+{
+    if (empty($regions)) {
+        return '';
+    }
+
+    $items = [];
+
+    foreach ($regions as $region) {
+        $regionKey = (string) $region;
+        $label = htmlspecialchars(plugin_get_region_label($regionKey), ENT_QUOTES);
+        $description = htmlspecialchars(plugin_get_region_description($regionKey), ENT_QUOTES);
+
+        $items[] = '<div><span class="font-semibold text-gray-90">'.$label.':</span> '.$description.'</div>';
+    }
+
+    return '<div class="mt-3 space-y-1 text-caption text-gray-50">'.implode('', $items).'</div>';
+}
+
+/**
+ * Render scope badges for admin/course/global usage.
+ */
+function plugin_render_scope_badges(array $metadata): string
+{
+    $badges = [];
+
+    if (!empty($metadata['is_admin_plugin'])) {
+        $badges[] = '<span class="badge badge--info">'.get_lang('Admin menu').'</span>';
+    }
+
+    if (!empty($metadata['is_course_plugin'])) {
+        $badges[] = '<span class="badge badge--success">'.get_lang('Course tool').'</span>';
+    }
+
+    if (empty($badges)) {
+        $badges[] = '<span class="badge badge--default">'.get_lang('Global regions').'</span>';
+    }
+
+    return implode(' ', $badges);
+}
+
+/**
+ * Render assigned region badges.
+ */
+function plugin_render_region_badges(array $regions): string
+{
+    if (empty($regions)) {
+        return '<span class="badge badge--default">'.get_lang('No regions assigned').'</span>';
+    }
+
+    $html = [];
+    foreach ($regions as $region) {
+        $regionKey = (string) $region;
+        $regionLabel = htmlspecialchars(plugin_get_region_label($regionKey), ENT_QUOTES);
+        $regionTechnical = htmlspecialchars($regionKey, ENT_QUOTES);
+
+        $html[] = '<span class="badge badge--info" title="'.$regionTechnical.'">'.$regionLabel.'</span>';
+    }
+
+    return implode(' ', $html);
+}
+
+/**
+ * Render a clamped plugin description.
+ */
+function plugin_render_comment_preview(string $comment): string
+{
+    $comment = trim($comment);
+    if ('' === $comment) {
+        return '';
+    }
+
+    $escapedComment = htmlspecialchars($comment, ENT_QUOTES);
+
+    return '<p class="mt-2 text-body-2 text-gray-50" title="'.$escapedComment.'" style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">'
+        .$escapedComment
+        .'</p>';
+}
+
+/**
+ * Build the selectable region list according to plugin type.
+ */
+function plugin_get_available_region_options(array $metadata, string $pluginName = ''): array
+{
+    $labels = plugin_get_region_labels();
+
+    if ('BeforeLogin' === $pluginName) {
+        return [
+            'login_top' => $labels['login_top'].' (login_top)',
+            'login_bottom' => $labels['login_bottom'].' (login_bottom)',
+        ];
+    }
+
+    if ('CourseBlock' === $pluginName) {
+        return [
+            'pre_footer' => $labels['pre_footer'].' (pre_footer)',
+            'footer_left' => $labels['footer_left'].' (footer_left)',
+            'footer_center' => $labels['footer_center'].' (footer_center)',
+            'footer_right' => $labels['footer_right'].' (footer_right)',
+        ];
+    }
+
+    if ('CustomFooter' === $pluginName) {
+        return [
+            'pre_footer' => $labels['pre_footer'].' (pre_footer)',
+        ];
+    }
+
+    if (!empty($metadata['is_admin_plugin'])) {
+        return [
+            'menu_administrator' => $labels['menu_administrator'].' (menu_administrator)',
+        ];
+    }
+
+    if (!empty($metadata['is_course_plugin'])) {
+        return [
+            'course_tool_plugin' => $labels['course_tool_plugin'].' (course_tool_plugin)',
+        ];
+    }
+
+    return [
+        'menu_administrator' => $labels['menu_administrator'].' (menu_administrator)',
+        'content_top' => $labels['content_top'].' (content_top)',
+        'content_bottom' => $labels['content_bottom'].' (content_bottom)',
+        'main_top' => $labels['main_top'].' (main_top)',
+        'main_bottom' => $labels['main_bottom'].' (main_bottom)',
+        'pre_footer' => $labels['pre_footer'].' (pre_footer)',
+    ];
+}
+
+function plugin_get_configure_url(string $pluginName): string
+{
+    return api_get_path(WEB_CODE_PATH).'admin/configure_plugin.php?'.http_build_query([
+            'plugin' => $pluginName,
+        ]);
+}
+
+function plugin_get_open_url(string $pluginName): ?string
+{
+    static $cache = [];
+
+    if (array_key_exists($pluginName, $cache)) {
+        return $cache[$pluginName];
+    }
+
+    $sysPluginPath = api_get_path(SYS_PLUGIN_PATH).$pluginName.'/';
+    $webPluginPath = api_get_path(WEB_PLUGIN_PATH).$pluginName.'/';
+
+    foreach (['admin.php', 'configure.php'] as $file) {
+        if (is_file($sysPluginPath.$file)) {
+            return $cache[$pluginName] = $webPluginPath.$file;
+        }
+    }
+
+    return $cache[$pluginName] = null;
+}
+
+/**
+ * This function allows easy activating and inactivating of plugins.
+ *
+ * @todo: a similar function needs to be written to activate or inactivate additional tools.
+ *
+ * @author Patrick Cool <patrick.cool@UGent.be>, Ghent University
+ * @author Julio Montoya <gugli100@gmail.com> Beeznest 2012
+ */
+function handlePlugins()
+{
+    Session::erase('plugin_data');
+
+    $allPlugins = (new AppPlugin())->read_plugins_from_path();
+    $allPluginRows = plugin_get_admin_rows($allPlugins);
+    $selectedTab = plugin_get_selected_tab();
+
+    $hiddenPluginCount = 0;
+    $pluginRows = array_values(array_filter(
+        $allPluginRows,
+        static function (array $pluginRow) use (&$hiddenPluginCount): bool {
+            $isVisible = plugin_should_be_visible_in_current_admin_view($pluginRow);
+
+            if (!$isVisible) {
+                $hiddenPluginCount++;
+            }
+
+            return $isVisible;
+        }
+    ));
+
+    $tabCounts = [
+        'included' => 0,
+        'commercial' => 0,
+        'all' => count($pluginRows),
+    ];
+
+    foreach ($pluginRows as $pluginRow) {
+        if (!empty($pluginRow['is_stable']) && 'free' === $pluginRow['commercial_model']) {
+            $tabCounts['included']++;
+        }
+
+        if ('free' !== $pluginRow['commercial_model']) {
+            $tabCounts['commercial']++;
+        }
+    }
+
+    echo '
+        <div class="section-header section-header--h2">
+            <h2 class="section-header__title">
+                '.get_lang('Manage plugins').'
+            </h2>
+            <div class="section-header__actions">
+                <a href="'.htmlspecialchars(api_get_self().'?category=Regions', ENT_QUOTES).'" class="btn btn--plain-outline">
+                    <i class="mdi mdi-view-grid-outline"></i>'.get_lang('Regions').'
+                </a>
+            </div>
+        </div>
+        <p class="text-body-1 text-gray-50">'.get_lang('Install, activate or deactivate plugins easily.').'</p>
+    ';
+
+    if (shouldShowAllPlugins()) {
+        echo '<div class="mb-4 rounded-2xl border border-info/20 bg-info/10 p-4 text-sm text-gray-90">';
+        echo '  <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">';
+        echo '      <div><strong>'.get_lang('Showing all plugins.').'</strong> '.get_lang('Some plugins are still pending functional verification.').'</div>';
+        echo '      <a class="btn btn--plain-outline btn--sm justify-center" href="'.htmlspecialchars(plugin_get_verified_plugins_url(), ENT_QUOTES).'">';
+        echo '          <i class="mdi mdi-filter-check-outline"></i> '.get_lang('Show verified plugins only');
+        echo '      </a>';
+        echo '  </div>';
+        echo '</div>';
+    } elseif (0 < $hiddenPluginCount) {
+        echo '<div class="mb-4 rounded-2xl border border-warning/20 bg-warning/10 p-4 text-sm text-gray-90">';
+        echo '  <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">';
+        echo '      <div><strong>'.get_lang('Showing verified plugins only.').'</strong> '.get_lang('Pending plugins are temporarily hidden until they are adapted and tested.').'</div>';
+        echo '      <a class="btn btn--plain-outline btn--sm justify-center" href="'.htmlspecialchars(plugin_get_show_all_plugins_url(), ENT_QUOTES).'">';
+        echo '          <i class="mdi mdi-eye-outline"></i> '.get_lang('Show all plugins');
+        echo '      </a>';
+        echo '  </div>';
+        echo '</div>';
+    }
+
+    echo '<div class="mb-4 rounded-2xl border border-gray-25 bg-white p-4 shadow-sm">';
+    echo '  <div class="mb-3 text-sm text-gray-60">';
+    echo        get_lang('Official and free plugins are listed separately from plugins that may depend on commercial services or paid offers.');
+    echo '  </div>';
+    echo '  <div class="flex flex-wrap gap-2">';
+    echo        plugin_render_admin_tab('included', get_lang('Included free plugins'), $tabCounts['included'], $selectedTab);
+    echo        plugin_render_admin_tab('commercial', get_lang('Commercial and freemium plugins'), $tabCounts['commercial'], $selectedTab);
+    echo        plugin_render_admin_tab('all', get_lang('All plugins'), $tabCounts['all'], $selectedTab);
+    echo '  </div>';
+    echo '</div>';
+
+    $visiblePluginRows = array_values(array_filter(
+        $pluginRows,
+        static fn (array $pluginRow): bool => plugin_matches_admin_tab($pluginRow, $selectedTab)
+    ));
+
+    usort($visiblePluginRows, static function (array $left, array $right): int {
+        $leftPlugin = $left['plugin'];
+        $rightPlugin = $right['plugin'];
+
+        $leftConfiguration = $leftPlugin?->getConfigurationsByAccessUrl(Container::getAccessUrlUtil()->getCurrent());
+        $rightConfiguration = $rightPlugin?->getConfigurationsByAccessUrl(Container::getAccessUrlUtil()->getCurrent());
+
+        $leftPriority = $leftPlugin && $leftPlugin->isInstalled() ? 1 : 0;
+        $rightPriority = $rightPlugin && $rightPlugin->isInstalled() ? 1 : 0;
+
+        if ($leftConfiguration && $leftConfiguration->isActive()) {
+            $leftPriority = 2;
+        }
+
+        if ($rightConfiguration && $rightConfiguration->isActive()) {
+            $rightPriority = 2;
+        }
+
+        if ($leftPriority !== $rightPriority) {
+            return $rightPriority <=> $leftPriority;
+        }
+
+        return strcasecmp((string) ($left['metadata']['title'] ?? $left['name']), (string) ($right['metadata']['title'] ?? $right['name']));
+    });
+
+    if (empty($visiblePluginRows)) {
+        echo Display::return_message(get_lang('No plugins were found for this category.'), 'info', false);
+    }
+
+    echo '<div class="mb-4 rounded-2xl border border-gray-25 bg-white p-4 shadow-sm">';
+    echo '  <div class="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">';
+    echo '      <div class="flex-1">';
+    echo '          <label for="plugin-admin-search" class="mb-1 block text-sm font-semibold text-gray-70">'.get_lang('Search plugins').'</label>';
+    echo '          <div class="relative">';
+    echo '              <i class="mdi mdi-magnify pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-50"></i>';
+    echo '              <input id="plugin-admin-search" type="search" class="w-full rounded-lg border border-gray-25 bg-white py-2 pl-10 pr-3 text-sm text-gray-90 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary" placeholder="'.htmlspecialchars(get_lang('Search by name or description'), ENT_QUOTES).'">';
+    echo '          </div>';
+    echo '      </div>';
+    echo '      <div class="flex flex-wrap items-center gap-2">';
+    echo '          <button id="plugin-admin-advanced-toggle" type="button" class="btn btn--plain-outline justify-center" aria-expanded="false" aria-controls="plugin-admin-advanced-filters">';
+    echo '              <i class="mdi mdi-tune-variant"></i> '.get_lang('Advanced filters');
+    echo '          </button>';
+    echo '          <button id="plugin-admin-clear-filters" type="button" class="btn btn--plain justify-center">';
+    echo '              <i class="mdi mdi-filter-remove-outline"></i> '.get_lang('Clear');
+    echo '          </button>';
+    echo '      </div>';
+    echo '  </div>';
+    echo '  <div id="plugin-admin-advanced-filters" class="mt-4 hidden rounded-xl border border-gray-25 bg-gray-5 p-4">';
+    echo '      <div class="grid gap-4 md:grid-cols-3">';
+    echo '          <div>';
+    echo '              <label for="plugin-admin-status-filter" class="mb-1 block text-sm font-semibold text-gray-70">'.get_lang('Status').'</label>';
+    echo '              <select id="plugin-admin-status-filter" class="w-full rounded-lg border border-gray-25 bg-white px-3 py-2 text-sm text-gray-90 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary">';
+    echo '                  <option value="">'.get_lang('All statuses').'</option>';
+    echo '                  <option value="enabled">'.get_lang('Enabled').'</option>';
+    echo '                  <option value="disabled">'.get_lang('Disabled').'</option>';
+    echo '                  <option value="installed">'.get_lang('Installed').'</option>';
+    echo '                  <option value="not-installed">'.get_lang('Not installed').'</option>';
+    echo '              </select>';
+    echo '          </div>';
+    echo '          <div>';
+    echo '              <label for="plugin-admin-source-filter" class="mb-1 block text-sm font-semibold text-gray-70">'.get_lang('Source').'</label>';
+    echo '              <select id="plugin-admin-source-filter" class="w-full rounded-lg border border-gray-25 bg-white px-3 py-2 text-sm text-gray-90 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary">';
+    echo '                  <option value="">'.get_lang('All sources').'</option>';
+    echo '                  <option value="official">'.get_lang('Official').'</option>';
+    echo '                  <option value="third_party">'.get_lang('Third party').'</option>';
+    echo '              </select>';
+    echo '          </div>';
+    echo '          <div>';
+    echo '              <label for="plugin-admin-type-filter" class="mb-1 block text-sm font-semibold text-gray-70">'.get_lang('Type').'</label>';
+    echo '              <select id="plugin-admin-type-filter" class="w-full rounded-lg border border-gray-25 bg-white px-3 py-2 text-sm text-gray-90 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary">';
+    echo '                  <option value="">'.get_lang('All types').'</option>';
+    echo '                  <option value="free">'.get_lang('100% free').'</option>';
+    echo '                  <option value="freemium">'.get_lang('Freemium').'</option>';
+    echo '                  <option value="commercial_service">'.get_lang('Commercial service').'</option>';
+    echo '                  <option value="commercial">'.get_lang('Commercial').'</option>';
+    echo '              </select>';
+    echo '          </div>';
+    echo '      </div>';
+    echo '  </div>';
+    echo '  <div class="mt-3 flex flex-wrap items-center justify-between gap-2 text-sm text-gray-50">';
+    echo '      <span id="plugin-admin-filter-summary" data-total="'.count($visiblePluginRows).'">'.count($visiblePluginRows).' / '.count($visiblePluginRows).'</span>';
+    echo '      <span class="inline-flex items-center gap-1 text-caption text-gray-50"><i class="mdi mdi-sort-ascending"></i> '.get_lang('Installed plugins are shown first').'</span>';
+    echo '  </div>';
+    echo '</div>';
+
+    echo '<div id="plugin-admin-empty-state" class="mb-4 hidden rounded-2xl border border-gray-25 bg-white p-6 text-center text-gray-50 shadow-sm">';
+    echo '  <i class="mdi mdi-puzzle-search-outline mb-2 block text-3xl text-primary"></i>';
+    echo '  <div class="font-semibold text-gray-90">'.get_lang('No plugins match the current filters.').'</div>';
+    echo '  <div class="mt-1 text-sm">'.get_lang('Try clearing the search or changing the filters.').'</div>';
+    echo '</div>';
+
+    echo '<div class="overflow-x-auto rounded-xl border border-gray-25 bg-white shadow-sm">';
+    echo '<table class="w-full min-w-[1060px] table-fixed">';
+    echo '<thead>';
+    echo '<tr class="bg-gray-10 text-left">';
+    echo '<th class="w-[42%] p-3 border-b border-gray-25">'.get_lang('Plugin').'</th>';
+    echo '<th class="w-[10%] p-3 border-b border-gray-25">'.get_lang('Version').'</th>';
+    echo '<th class="w-[18%] p-3 border-b border-gray-25">'.get_lang('Type').'</th>';
+    echo '<th class="w-[10%] p-3 border-b border-gray-25">'.get_lang('Status').'</th>';
+    echo '<th class="w-[20%] p-3 border-b border-gray-25 text-center">'.get_lang('Actions').'</th>';
+    echo '</tr>';
+    echo '</thead>';
+    echo '<tbody>';
+
+    foreach ($visiblePluginRows as $pluginRow) {
+        $pluginName = $pluginRow['name'];
+        $metadata = $pluginRow['metadata'];
+        $plugin = $pluginRow['plugin'];
+        $hasNoRegions = $pluginRow['has_no_regions'];
+        $hasReadme = $pluginRow['has_readme'];
+        $source = $pluginRow['source'];
+        $commercialModel = $pluginRow['commercial_model'];
+
+        $pluginConfiguration = $plugin?->getConfigurationsByAccessUrl(Container::getAccessUrlUtil()->getCurrent());
+        $isInstalled = $plugin && $plugin->isInstalled();
+        $isEnabled = $plugin && $pluginConfiguration && $pluginConfiguration->isActive();
+
+        $pluginDisplayTitle = htmlspecialchars($metadata['title'], ENT_QUOTES);
+        $pluginDisplayComment = trim((string) $metadata['comment']);
+        $pluginDisplayVersion = htmlspecialchars($metadata['version'], ENT_QUOTES);
+        $pluginDataName = htmlspecialchars($pluginName, ENT_QUOTES);
+
+        $regionsUrl = api_get_path(WEB_CODE_PATH).'admin/settings.php?'.http_build_query([
+                'category' => 'Regions',
+                'name' => $pluginName,
+            ]);
+
+        $statusBadge = $isInstalled
+            ? ($isEnabled
+                ? '<span class="badge badge--success">'.get_lang('Enabled').'</span>'
+                : '<span class="badge badge--warning">'.get_lang('Disabled').'</span>')
+            : '<span class="badge badge--default">'.get_lang('Not installed').'</span>';
+
+        $pluginSearchText = strtolower(trim($pluginName.' '.($metadata['title'] ?? '').' '.$pluginDisplayComment.' '.($metadata['version'] ?? '')));
+        $pluginSearchText = htmlspecialchars($pluginSearchText, ENT_QUOTES);
+        $pluginStatus = $isInstalled ? ($isEnabled ? 'enabled' : 'disabled') : 'not-installed';
+        $pluginInstalled = $isInstalled ? '1' : '0';
+
+        echo '<tr class="plugin-admin-row border-t border-gray-25 align-top transition hover:bg-gray-15"
+            data-plugin-row="1"
+            data-plugin-search="'.$pluginSearchText.'"
+            data-plugin-status="'.$pluginStatus.'"
+            data-plugin-installed="'.$pluginInstalled.'"
+            data-plugin-source="'.htmlspecialchars($source, ENT_QUOTES).'"
+            data-plugin-type="'.htmlspecialchars($commercialModel, ENT_QUOTES).'">';
+
+        echo '<td class="p-3">';
+        echo '  <div class="relative min-w-0 overflow-hidden rounded-xl border border-gray-25 bg-white p-3">';
+        echo '      <div class="flex flex-wrap items-center gap-2">';
+        echo '          <div class="font-bold text-gray-90">'.$pluginDisplayTitle.'</div>';
+        echo            plugin_render_source_badge($source);
+        echo '      </div>';
+
+        if ('' !== $pluginDisplayComment) {
+            $escapedComment = htmlspecialchars($pluginDisplayComment, ENT_QUOTES);
+            echo '      <p class="mt-2 max-h-10 overflow-hidden text-caption text-gray-50" title="'.$escapedComment.'">'
+                .$escapedComment
+                .'</p>';
+        }
+
+        echo '  </div>';
+        echo '</td>';
+
+        echo '<td class="p-3 text-sm text-gray-90">'.$pluginDisplayVersion.'</td>';
+        echo '<td class="p-3">';
+        echo '  <div class="flex items-center">';
+        echo        plugin_render_commercial_badge($commercialModel);
+        echo '  </div>';
+        echo '</td>';
+        echo '<td class="p-3">'.$statusBadge.'</td>';
+
+        echo '<td class="p-3">';
+        echo '  <div class="mx-auto grid max-w-[360px] grid-cols-2 gap-2">';
+
+        if ($isInstalled) {
+            $toggleAction = $isEnabled ? 'disable' : 'enable';
+            $toggleText = $isEnabled ? get_lang('Disable') : get_lang('Enable');
+            $toggleColor = $isEnabled ? 'btn--plain' : 'btn--warning';
+            $toggleIcon = $isEnabled ? 'mdi mdi-toggle-switch-off-outline' : 'mdi mdi-toggle-switch-outline';
+
+            $configureUrl = plugin_get_configure_url($pluginName);
+            $openUrl = plugin_get_open_url($pluginName);
+
+            echo '      <button class="plugin-action btn btn--sm '.$toggleColor.' w-full justify-center"
+                    data-plugin="'.$pluginDataName.'"
+                    data-action="'.$toggleAction.'">
+                    <i class="'.$toggleIcon.'"></i> '.$toggleText.'
+                </button>';
+
+            echo '      <a href="'.htmlspecialchars($configureUrl, ENT_QUOTES).'" class="btn btn--secondary btn--sm w-full justify-center">';
+            echo '          <i class="mdi mdi-cog-outline"></i> '.get_lang('Configure');
+            echo '      </a>';
+
+            if ($isEnabled && !empty($openUrl)) {
+                echo '      <a href="'.htmlspecialchars($openUrl, ENT_QUOTES).'" class="btn btn--plain-outline btn--sm w-full justify-center">';
+                echo '          <i class="mdi mdi-open-in-new"></i> '.get_lang('Open');
+                echo '      </a>';
+            } elseif (!empty($openUrl)) {
+                echo '      <span class="btn btn--plain-outline btn--sm w-full justify-center opacity-50 cursor-not-allowed">';
+                echo '          <i class="mdi mdi-open-in-new"></i> '.get_lang('Open');
+                echo '      </span>';
+            }
+
+            if (!$hasNoRegions) {
+                echo '      <a href="'.htmlspecialchars($regionsUrl, ENT_QUOTES).'" class="btn btn--plain-outline btn--sm w-full justify-center">';
+                echo '          <i class="mdi mdi-view-grid-plus-outline"></i> '.get_lang('Regions');
+                echo '      </a>';
+            }
+
+            echo '      <button class="plugin-action btn btn--danger btn--sm w-full justify-center"
+                    data-plugin="'.$pluginDataName.'"
+                    data-action="uninstall">
+                    <i class="mdi mdi-trash-can-outline"></i> '.get_lang('Uninstall').'
+                </button>';
+        } else {
+            echo '      <button class="plugin-action btn btn--success btn--sm w-full justify-center"
+                    data-plugin="'.$pluginDataName.'"
+                    data-action="install">
+                    <i class="mdi mdi-download"></i> '.get_lang('Install').'
+                </button>';
+
+            echo '      <span></span>';
+        }
+
+        if ($hasReadme) {
+            echo '      <a href="'.htmlspecialchars(api_get_path(WEB_AJAX_PATH).'plugin.ajax.php?'.http_build_query(['a' => 'md_to_html', 'plugin' => $pluginName]), ENT_QUOTES).'"
+                    data-title="'.$pluginDisplayTitle.'"
+                    class="plugin-readme-link btn btn--plain-outline btn--sm col-span-2 w-full justify-center">';
+            echo '          <i class="mdi mdi-file-document-outline"></i> '.get_lang('README');
+            echo '      </a>';
+        }
+
+        echo '  </div>';
+        echo '</td>';
+
+        echo '</tr>';
+    }
+
+    echo '</tbody>';
+    echo '</table>';
+    echo '</div>';
+
+    echo '<div id="page-loader" class="hidden fixed inset-0 bg-black/30 z-40">
+            <div class="absolute inset-0 flex items-center justify-center">
+              <div class="text-white text-sm text-center">
+                <i class="mdi mdi-loading mdi-spin text-3xl block mb-2"></i>
+                '.get_lang('Processing').'…
+              </div>
+            </div>
+          </div>';
+
+    echo '<div id="plugin-readme-modal" class="hidden fixed inset-0 z-50" aria-hidden="true">
+            <div class="plugin-readme-close absolute inset-0 bg-black/40"></div>
+            <div class="relative flex min-h-screen items-start justify-center p-4 md:p-6">
+                <div class="relative flex w-full max-w-4xl flex-col rounded-xl bg-white shadow-xl">
+                    <div class="flex items-center justify-between gap-3 border-b border-gray-25 px-5 py-4">
+                        <h3 id="plugin-readme-modal-title" class="mb-0 text-xl font-semibold text-gray-90">README</h3>
+                        <button type="button" class="plugin-readme-close ch-tool-icon-button" aria-label="'.htmlspecialchars(get_lang('Close'), ENT_QUOTES).'">
+                            <i class="mdi mdi-close ch-tool-icon"></i>
+                        </button>
+                    </div>
+                    <div id="plugin-readme-modal-body" class="max-h-[75vh] overflow-y-auto px-5 py-4 text-sm leading-6 text-gray-90"></div>
+                </div>
+            </div>
+          </div>';
+
+    $ajaxUrl = json_encode(api_get_path(WEB_AJAX_PATH).'plugin.ajax.php');
+    $loadingText = json_encode(get_lang('Loading').'…');
+    $errorText = json_encode(get_lang('Error'));
+    $requestFailedText = json_encode(get_lang('Request failed'));
+    $doneText = json_encode(get_lang('Done'));
+    $processingText = json_encode(get_lang('Processing'));
+    $installingText = json_encode(get_lang('Installing'));
+    $uninstallingText = json_encode(get_lang('Uninstalling'));
+    $enablingText = json_encode(get_lang('Enabling'));
+    $disablingText = json_encode(get_lang('Disabling'));
+    $readmeTitleSuffix = json_encode('README');
+
+    echo <<<JS
+<script>
+(function($){
+  var ajaxUrl = {$ajaxUrl};
+  var loadingText = {$loadingText};
+  var errorText = {$errorText};
+  var requestFailedText = {$requestFailedText};
+  var doneText = {$doneText};
+  var processingText = {$processingText};
+  var installingText = {$installingText};
+  var uninstallingText = {$uninstallingText};
+  var enablingText = {$enablingText};
+  var disablingText = {$disablingText};
+  var readmeTitleSuffix = {$readmeTitleSuffix};
+
+  function normalizePluginFilterValue(value) {
+    return (value || "").toString().trim().toLowerCase();
+  }
+
+  function applyPluginAdminFilters() {
+    var search = normalizePluginFilterValue($("#plugin-admin-search").val());
+    var status = normalizePluginFilterValue($("#plugin-admin-status-filter").val());
+    var source = normalizePluginFilterValue($("#plugin-admin-source-filter").val());
+    var type = normalizePluginFilterValue($("#plugin-admin-type-filter").val());
+    var visibleCount = 0;
+
+    $(".plugin-admin-row").each(function () {
+      var \$row = $(this);
+      var rowSearch = normalizePluginFilterValue(\$row.data("plugin-search"));
+      var rowStatus = normalizePluginFilterValue(\$row.data("plugin-status"));
+      var rowInstalled = normalizePluginFilterValue(\$row.data("plugin-installed"));
+      var rowSource = normalizePluginFilterValue(\$row.data("plugin-source"));
+      var rowType = normalizePluginFilterValue(\$row.data("plugin-type"));
+
+      var matchesSearch = !search || rowSearch.indexOf(search) !== -1;
+      var matchesStatus = !status ||
+        rowStatus === status ||
+        (status === "installed" && rowInstalled === "1");
+      var matchesSource = !source || rowSource === source;
+      var matchesType = !type || rowType === type;
+
+      if (matchesSearch && matchesStatus && matchesSource && matchesType) {
+        \$row.removeClass("hidden");
+        visibleCount++;
+      } else {
+        \$row.addClass("hidden");
+      }
+    });
+
+    $("#plugin-admin-empty-state").toggleClass("hidden", visibleCount > 0);
+    $("#plugin-admin-filter-summary").text(visibleCount + " / " + ($("#plugin-admin-filter-summary").data("total") || 0));
+  }
+
+  function showToast(message, type) {
+    var bg = type === "success" ? "bg-green-600" : (type === "warning" ? "bg-yellow-600" : "bg-red-600");
+    var \$toast = $("<div/>", {
+      class: "fixed top-4 right-4 z-50 text-white px-4 py-3 rounded shadow " + bg,
+      text: message
+    }).appendTo("body");
+    setTimeout(function(){ \$toast.fadeOut(300, function(){ $(this).remove(); }); }, 3500);
+  }
+
+  function actionLabel(action) {
+    switch (action) {
+      case "install": return installingText;
+      case "uninstall": return uninstallingText;
+      case "enable": return enablingText;
+      case "disable": return disablingText;
+      default: return processingText;
+    }
+  }
+
+  function openReadmeModal(title) {
+    $("#plugin-readme-modal-title").text(title);
+    $("#plugin-readme-modal").removeClass("hidden").attr("aria-hidden", "false");
+    $("body").addClass("overflow-hidden");
+  }
+
+  function closeReadmeModal() {
+    $("#plugin-readme-modal").addClass("hidden").attr("aria-hidden", "true");
+    $("#plugin-readme-modal-body").empty();
+    $("body").removeClass("overflow-hidden");
+  }
+
+  function showReadmeLoading(title) {
+    openReadmeModal(title);
+    $("#plugin-readme-modal-body").html(
+      '<div class="flex flex-col items-center justify-center gap-3 py-8 text-gray-50">' +
+      '<i class="mdi mdi-loading mdi-spin text-3xl"></i>' +
+      '<div>' + loadingText + '</div>' +
+      '</div>'
+    );
+  }
+
+  $(document).ready(function () {
+    $(document).on("click", "#plugin-admin-advanced-toggle", function () {
+      var \$button = $(this);
+      var \$filters = $("#plugin-admin-advanced-filters");
+      var isExpanded = \$button.attr("aria-expanded") === "true";
+
+      \$button.attr("aria-expanded", isExpanded ? "false" : "true");
+      \$filters.toggleClass("hidden", isExpanded);
+    });
+
+    $(document).on("input change", "#plugin-admin-search, #plugin-admin-status-filter, #plugin-admin-source-filter, #plugin-admin-type-filter", applyPluginAdminFilters);
+
+    $(document).on("click", "#plugin-admin-clear-filters", function () {
+      $("#plugin-admin-search").val("");
+      $("#plugin-admin-status-filter").val("");
+      $("#plugin-admin-source-filter").val("");
+      $("#plugin-admin-type-filter").val("");
+      applyPluginAdminFilters();
+    });
+
+    applyPluginAdminFilters();
+
+    $(document).on("click", ".plugin-action", function () {
+      var \$btn = $(this);
+      if (\$btn.data("busy")) {
+        return;
+      }
+
+      var pluginName = \$btn.data("plugin");
+      var action = \$btn.data("action");
+      var originalHtml = \$btn.html();
+
+      \$btn.data("busy", true)
+          .attr("aria-busy", "true")
+          .addClass("opacity-60 cursor-not-allowed")
+          .html('<i class="mdi mdi-loading mdi-spin"></i> ' + actionLabel(action) + "...");
+
+      $.ajax({
+        type: "POST",
+        url: ajaxUrl,
+        data: { a: action, plugin: pluginName },
+        dataType: "json",
+        timeout: 120000,
+        beforeSend: function() {
+          showToast(actionLabel(action) + "…", "warning");
+        },
+        success: function(data) {
+          if (data && data.success) {
+            showToast(doneText + ": " + action.toUpperCase(), "success");
+            setTimeout(function(){ location.reload(); }, 500);
+          } else {
+            var msg = (data && (data.error || data.message)) ? (data.error || data.message) : errorText;
+            showToast(errorText + ": " + msg, "error");
+            \$btn.html(originalHtml);
+          }
+        },
+        error: function(xhr) {
+          var msg = requestFailedText;
+          try {
+            var json = JSON.parse(xhr.responseText);
+            if (json && (json.error || json.message)) {
+              msg = json.error || json.message;
+            }
+          } catch (e) {}
+          showToast(errorText + ": " + msg, "error");
+          \$btn.html(originalHtml);
+        },
+        complete: function() {
+          \$btn.data("busy", false)
+              .removeAttr("aria-busy")
+              .removeClass("opacity-60 cursor-not-allowed");
+        }
+      });
+    });
+
+    $(document).on("click", ".plugin-readme-link", function (event) {
+      event.preventDefault();
+
+      var \$link = $(this);
+      var title = (\$link.data("title") || "Plugin") + " - " + readmeTitleSuffix;
+
+      showReadmeLoading(title);
+
+      $.ajax({
+        type: "GET",
+        url: \$link.attr("href"),
+        dataType: "html",
+        timeout: 60000,
+        success: function(html) {
+          $("#plugin-readme-modal-body").html(html);
+        },
+        error: function() {
+          $("#plugin-readme-modal-body").html(
+            '<div class="rounded-xl border border-danger bg-danger/10 p-4 text-danger">' +
+            errorText + ": " + requestFailedText +
+            '</div>'
+          );
+        }
+      });
+    });
+
+    $(document).on("click", ".plugin-readme-close", closeReadmeModal);
+
+    $(document).on("keyup", function (event) {
+      if (event.key === "Escape") {
+        closeReadmeModal();
+      }
+    });
+  });
+})(jQuery);
+</script>
+JS;
+}
+
+/**
+ * Determine if a plugin exposes editable settings (excluding legacy enable/active toggles).
+ * Used to decide whether the "Configure" button should be shown.
+ */
+function plugin_has_editable_settings(string $pluginName): bool
+{
+    static $cache = [];
+    if (array_key_exists($pluginName, $cache)) {
+        return $cache[$pluginName];
+    }
+
+    $has = false;
+
+    try {
+        $app = new AppPlugin();
+        $info = $app->getPluginInfo($pluginName) ?? [];
+
+        $legacyToggles = [
+            'tool_enable',
+            'enable_onlyoffice_plugin',
+            'enabled',
+            'enable',
+            'active',
+            'is_active',
+        ];
+
+        $metaOnlyKeys = [
+            'regions',
+        ];
+
+        $nonEditableTypes = [
+            'html',
+            'label',
+            'static',
+            'message',
+            'info',
+        ];
+
+        $editableFields = [];
+
+        // IMPORTANT:
+        // If the plugin explicitly defines "settings", even as an empty array,
+        // do not fallback to getFieldNames(), because some plugins return rendered HTML there.
+        if (array_key_exists('settings', $info) && is_array($info['settings'])) {
+            foreach ($info['settings'] as $name => $type) {
+                $name = (string) $name;
+
+                if (in_array($name, $legacyToggles, true) || in_array($name, $metaOnlyKeys, true)) {
+                    continue;
+                }
+
+                if (is_string($type)) {
+                    $normalizedType = strtolower(trim($type));
+
+                    if (in_array($normalizedType, $nonEditableTypes, true)) {
+                        continue;
+                    }
+                }
+
+                $editableFields[] = $name;
+            }
+        } elseif (!empty($info['obj']) && $info['obj'] instanceof Plugin) {
+            $fieldNames = (array) $info['obj']->getFieldNames();
+
+            foreach ($fieldNames as $fieldName) {
+                $fieldName = trim((string) $fieldName);
+
+                if ('' === $fieldName) {
+                    continue;
+                }
+
+                if (str_contains($fieldName, '<')) {
+                    continue;
+                }
+
+                if (in_array($fieldName, $legacyToggles, true) || in_array($fieldName, $metaOnlyKeys, true)) {
+                    continue;
+                }
+
+                $editableFields[] = $fieldName;
+            }
+        }
+
+        $has = count($editableFields) > 0;
+    } catch (\Throwable $e) {
+        $has = false;
+    }
+
+    return $cache[$pluginName] = $has;
+}
+
+/**
+ * Return the best management URL for a plugin.
+ * Priority:
+ * 1. plugin admin.php
+ * 2. plugin configure.php
+ * 3. legacy configure_plugin.php when the plugin exposes editable settings
+ */
+function plugin_get_management_url(string $pluginName): ?string
+{
+    static $cache = [];
+
+    if (array_key_exists($pluginName, $cache)) {
+        return $cache[$pluginName];
+    }
+
+    $sysPluginPath = api_get_path(SYS_PLUGIN_PATH).$pluginName.'/';
+    $webPluginPath = api_get_path(WEB_PLUGIN_PATH).$pluginName.'/';
+
+    foreach (['admin.php', 'configure.php'] as $file) {
+        if (is_file($sysPluginPath.$file)) {
+            return $cache[$pluginName] = $webPluginPath.$file;
+        }
+    }
+
+    return $cache[$pluginName] = api_get_path(WEB_CODE_PATH).'admin/configure_plugin.php?'.http_build_query([
+            'plugin' => $pluginName,
+        ]);
+}
+
+/**
+ * Creates the folder (if needed) and uploads the stylesheet in it.
+ *
+ * @param array $values  the values of the form
+ * @param array $picture the values of the uploaded file
+ *
+ * @return bool
+ *
+ * @author Patrick Cool <patrick.cool@UGent.be>, Ghent University, Belgium
+ *
+ * @version May 2008
+ *
+ * @since v1.8.5
+ */
+function uploadStylesheet($values, $picture)
+{
+    $result = false;
+    // Valid name for the stylesheet folder.
+    $style_name = api_preg_replace('/[^A-Za-z0-9]/', '', $values['name_stylesheet']);
+    if (empty($style_name) || is_array($style_name)) {
+        // The name of the uploaded stylesheet doesn't have the expected format
+        return $result;
+    }
+    $cssToUpload = CSS_UPLOAD_PATH;
+
+    // Check if a virtual instance vchamilo is used
+    $virtualInstanceTheme = api_get_configuration_value('virtual_css_theme_folder');
+    if (!empty($virtualInstanceTheme)) {
+        $cssToUpload = $cssToUpload.$virtualInstanceTheme.'/';
+    }
+
+    // Create the folder if needed.
+    if (!is_dir($cssToUpload.$style_name.'/')) {
+        mkdir($cssToUpload.$style_name.'/', api_get_permissions_for_new_directories());
+    }
+
+    $info = pathinfo($picture['name']);
+
+    if ('zip' == $info['extension']) {
+        // Try to open the file and extract it in the theme.
+        $zip = new ZipArchive();
+        if ($zip->open($picture['tmp_name'])) {
+            // Make sure all files inside the zip are images or css.
+            $num_files = $zip->numFiles;
+            $valid = true;
+            $single_directory = true;
+            $invalid_files = [];
+
+            $allowedFiles = getAllowedFileTypes();
+
+            for ($i = 0; $i < $num_files; $i++) {
+                $file = $zip->statIndex($i);
+                // Reject path traversal entries (ZIP Slip)
+                $entryName = str_replace('\\', '/', $file['name']);
+                if (str_contains($entryName, '../') || str_starts_with($entryName, '/')) {
+                    $valid = false;
+                    $invalid_files[] = $file['name'];
+                    continue;
+                }
+                if ('/' != substr($file['name'], -1)) {
+                    $path_parts = pathinfo($file['name']);
+                    if (!in_array($path_parts['extension'], $allowedFiles)) {
+                        $valid = false;
+                        $invalid_files[] = $file['name'];
+                    }
+                }
+
+                if (false === strpos($file['name'], '/')) {
+                    $single_directory = false;
+                }
+            }
+            if (!$valid) {
+                $error_string = '<ul>';
+                foreach ($invalid_files as $invalid_file) {
+                    $error_string .= '<li>'.$invalid_file.'</li>';
+                }
+                $error_string .= '</ul>';
+                echo Display::return_message(
+                    get_lang('The only accepted extensions in the ZIP file are .jp(e)g, .png, .gif and .css.').$error_string,
+                    'error',
+                    false
+                );
+            } else {
+                // If the zip does not contain a single directory, extract it.
+                if (!$single_directory) {
+                    // Extract zip file.
+                    $zip->extractTo($cssToUpload.$style_name.'/');
+                    $result = true;
+                } else {
+                    $extraction_path = $cssToUpload.$style_name.'/';
+                    $mode = api_get_permissions_for_new_directories();
+                    for ($i = 0; $i < $num_files; $i++) {
+                        $entry = $zip->getNameIndex($i);
+                        if ('/' == substr($entry, -1)) {
+                            continue;
+                        }
+
+                        $pos_slash = strpos($entry, '/');
+                        $entry_without_first_dir = substr($entry, $pos_slash + 1);
+                        // Guard against ZIP Slip: resolve and verify the destination stays within extraction_path
+                        $destDir = $extraction_path.dirname($entry_without_first_dir);
+                        $destFile = $destDir.'/'.basename($entry);
+                        $realExtraction = realpath($extraction_path);
+                        // realpath() returns false for non-existent paths; build normalised path manually
+                        $normDest = $realExtraction.'/'.ltrim(
+                            str_replace(['\\', '../', './'], ['/', '', ''], $entry_without_first_dir),
+                            '/'
+                        );
+                        if (!str_starts_with($normDest, $realExtraction.'/')) {
+                            continue; // skip malicious entry
+                        }
+                        // If there is still a slash, we need to make sure the directories are created.
+                        if (false !== strpos($entry_without_first_dir, '/')) {
+                            if (!is_dir($destDir)) {
+                                // Create it.
+                                @mkdir($destDir, $mode, true);
+                            }
+                        }
+
+                        $fp = $zip->getStream($entry);
+                        $ofp = fopen($destFile, 'w');
+
+                        while (!feof($fp)) {
+                            fwrite($ofp, fread($fp, 8192));
+                        }
+
+                        fclose($fp);
+                        fclose($ofp);
+                    }
+                    $result = true;
+                }
+            }
+            $zip->close();
+        } else {
+            echo Display::return_message(get_lang('Error reading ZIP file').$info['extension'], 'error', false);
+        }
+    } else {
+        // Simply move the file.
+        move_uploaded_file($picture['tmp_name'], $cssToUpload.$style_name.'/'.basename($picture['name']));
+        $result = true;
+    }
+
+    if ($result) {
+        $fs = new Filesystem();
+        $fs->mirror(
+            CSS_UPLOAD_PATH,
+            api_get_path(SYMFONY_SYS_PATH).'var/themes/',
+            null,
+            ['override' => true]
+        );
+    }
+
+    return $result;
+}
+
+/**
+ * Store plugin regions.
+ */
+function storeRegions(): void
+{
+    $currentAccessUrl = Container::getAccessUrlUtil()->getCurrent();
+    $pluginRepo = Container::getPluginRepository();
+    $em = Container::getEntityManager();
+
+    $plugin_obj = new AppPlugin();
+    $plugin_list = $plugin_obj->read_plugins_from_path();
+
+    foreach ($plugin_list as $plugin) {
+        $entityPlugin = $pluginRepo->getInstalledByName($plugin);
+
+        if (!$entityPlugin) {
+            continue;
+        }
+
+        $pluginInUrl = $entityPlugin->getOrCreatePluginConfiguration($currentAccessUrl);
+        $pluginConfiguration = $pluginInUrl->getConfiguration();
+
+        if (!is_array($pluginConfiguration)) {
+            $pluginConfiguration = [];
+        }
+
+        if (plugin_has_no_regions($plugin)) {
+            unset($pluginConfiguration['regions']);
+            $pluginInUrl->setConfiguration($pluginConfiguration);
+            continue;
+        }
+
+        $areas_to_install = array_filter(
+            $_POST['plugin_'.$plugin] ?? [],
+            static fn ($region) => !empty($region) && '-1' !== (string) $region
+        );
+
+        $pluginConfiguration['regions'] = array_values($areas_to_install);
+        $pluginInUrl->setConfiguration($pluginConfiguration);
+    }
+
+    $em->flush();
+}
+
+/**
+ * This function checks if the given style is a recognize style that exists in the css directory as
+ * a standalone directory.
+ *
+ * @param string $style
+ *
+ * @return bool True if this style is recognized, false otherwise
+ */
+function isStyle($style)
+{
+    $themeList = api_get_themes();
+
+    return in_array($style, array_keys($themeList));
+}
+
+/**
+ * Search options
+ * TODO: support for multiple site. aka $_configuration['access_url'] == 1.
+ *
+ * @author Marco Villegas <marvil07@gmail.com>
+ */
+function handleSearch()
+{
+    global $SettingsStored, $_configuration;
+
+    $search_enabled = api_get_setting('search_enabled');
+
+    $form = new FormValidator(
+        'search-options',
+        'post',
+        api_get_self().'?category=Search'
+    );
+    $values = api_get_settings_options('search_enabled');
+    $form->addElement('header', null, get_lang('Fulltext search'));
+
+    $group = formGenerateElementsGroup($form, 'search_enabled', $values);
+
+    // SearchEnabledComment
+    $form->addGroup(
+        $group,
+        'search_enabled',
+        [get_lang('Fulltext search'), get_lang('This feature allows you to index most of the documents uploaded to your portal, then provide a search feature for users.<br />This feature will not index documents that have already been uploaded, so it is important to enable (if wanted) at the beginning of your implementation.<br />Once enabled, a search box will appear in the courses list of every user. Searching for a specific term will bring a list of corresponding documents, exercises or forum topics, filtered depending on the availability of these contents to the user.')],
+        null,
+        false
+    );
+
+    $search_enabled = api_get_setting('search_enabled');
+
+    if ($form->validate()) {
+        $formValues = $form->exportValues();
+        setConfigurationSettingsInDatabase($formValues, $_configuration['access_url']);
+        $search_enabled = $formValues['search_enabled'];
+        echo Display::return_message($SettingsStored, 'confirm');
+    }
+    $specific_fields = get_specific_field_list();
+
+    if ('true' == $search_enabled) {
+        $values = api_get_settings_options('search_show_unlinked_results');
+        $group = formGenerateElementsGroup(
+            $form,
+            'search_show_unlinked_results',
+            $values
+        );
+        $form->addGroup(
+            $group,
+            'search_show_unlinked_results',
+            [
+                get_lang('Full-text search: show unlinked results'),
+                get_lang('When showing the results of a full-text search, what should be done with the results that are not accessible to the current user?'),
+            ],
+            null,
+            false
+        );
+        $default_values['search_show_unlinked_results'] = api_get_setting('search_show_unlinked_results');
+
+        $sf_values = [];
+        foreach ($specific_fields as $sf) {
+            $sf_values[$sf['code']] = $sf['name'];
+        }
+        $url = Display::div(
+            Display::url(
+                get_lang('Add a specific search field'),
+                'specific_fields.php'
+            ),
+            ['class' => 'sectioncomment']
+        );
+        if (empty($sf_values)) {
+            $form->addElement('label', [get_lang('Specific Field for prefilter'), $url]);
+        } else {
+            $form->addElement(
+                'select',
+                'search_prefilter_prefix',
+                [get_lang('Specific Field for prefilter'), $url],
+                $sf_values,
+                ''
+            );
+            $default_values['search_prefilter_prefix'] = api_get_setting('search_prefilter_prefix');
+        }
+    }
+
+    $default_values['search_enabled'] = $search_enabled;
+
+    $form->addButtonSave(get_lang('Save'));
+    $form->setDefaults($default_values);
+
+    echo '<div id="search-options-form">';
+    $form->display();
+    echo '</div>';
+
+    if ('true' == $search_enabled) {
+        //$xapianPath = api_get_path(SYS_UPLOAD_PATH).'plugins/xapian/searchdb';
+
+        /*
+        @todo Test the Xapian connection
+        if (extension_loaded('xapian')) {
+            require_once 'xapian.php';
+            try {
+                $db = new XapianDatabase($xapianPath.'/');
+            } catch (Exception $e) {
+                var_dump($e->getMessage());
+            }
+
+            require_once api_get_path(LIBRARY_PATH) . 'search/ChamiloIndexer.class.php';
+            require_once api_get_path(LIBRARY_PATH) . 'search/IndexableChunk.class.php';
+            require_once api_get_path(LIBRARY_PATH) . 'specific_fields_manager.lib.php';
+
+            $indexable = new IndexableChunk();
+            $indexable->addValue("content", 'Test');
+
+            $di = new ChamiloIndexer();
+            $di->connectDb(NULL, NULL, 'english');
+            $di->addChunk($indexable);
+            $did = $di->index();
+        }
+        */
+
+        $xapianLoaded = Display::getMdiIcon(StateIcon::OPEN_VISIBILITY, 'ch-tool-icon', null, ICON_SIZE_SMALL, get_lang('Validate'));
+        $dir_exists = Display::getMdiIcon(StateIcon::OPEN_VISIBILITY, 'ch-tool-icon', null, ICON_SIZE_SMALL, get_lang('Validate'));
+        $dir_is_writable = Display::getMdiIcon(StateIcon::OPEN_VISIBILITY, 'ch-tool-icon', null, ICON_SIZE_SMALL, get_lang('Validate'));
+        $specific_fields_exists = Display::getMdiIcon(StateIcon::OPEN_VISIBILITY, 'ch-tool-icon', null, ICON_SIZE_SMALL, get_lang('Validate'));
+
+        //Testing specific fields
+        if (empty($specific_fields)) {
+            $specific_fields_exists = Display::getMdiIcon(StateIcon::CLOSED_VISIBILITY, 'ch-tool-icon', null, ICON_SIZE_SMALL, get_lang('Add a specific search field')
+            );
+        }
+        //Testing xapian extension
+        if (!extension_loaded('xapian')) {
+            $xapianLoaded = Display::getMdiIcon(StateIcon::CLOSED_VISIBILITY, 'ch-tool-icon', null, ICON_SIZE_SMALL, get_lang('Error'));
+        }
+        //Testing xapian searchdb path
+        if (!is_dir($xapianPath)) {
+            $dir_exists = Display::getMdiIcon(StateIcon::CLOSED_VISIBILITY, 'ch-tool-icon', null, ICON_SIZE_SMALL, get_lang('Error'));
+        }
+        //Testing xapian searchdb path is writable
+        if (!is_writable($xapianPath)) {
+            $dir_is_writable = Display::getMdiIcon(StateIcon::CLOSED_VISIBILITY, 'ch-tool-icon', null, ICON_SIZE_SMALL, get_lang('Error'));
+        }
+
+        $data = [];
+        $data[] = [get_lang('Xapian module installed'), $xapianLoaded];
+        $data[] = [get_lang('The directory exists').' - '.$xapianPath, $dir_exists];
+        $data[] = [get_lang('Is writable').' - '.$xapianPath, $dir_is_writable];
+        $data[] = [get_lang('Available custom search fields'), $specific_fields_exists];
+
+        showSearchSettingsTable($data);
+        showSearchToolsStatusTable();
+    }
+}
+
+/**
+ * Wrapper for the templates.
+ *
+ * @author Patrick Cool <patrick.cool@UGent.be>, Ghent University, Belgium
+ * @author Julio Montoya.
+ *
+ * @version August 2008
+ *
+ * @since v1.8.6
+ */
+function handleTemplates()
+{
+    /* Drive-by fix to avoid undefined var warnings, without repeating
+     * isset() combos all over the place. */
+    $action = isset($_GET['action']) ? $_GET['action'] : "invalid";
+
+    if ('add' != $action) {
+        echo '<div class="actions" style="margin-left: 1px;">';
+        echo '<a href="settings.php?category=Templates&action=add">'.
+                Display::getMdiIcon(ObjectIcon::TEMPLATE, 'ch-tool-icon', null, ICON_SIZE_MEDIUM, get_lang('Add a template')).'</a>';
+        echo '</div>';
+    }
+
+    if ('add' == $action || ('edit' == $action && is_numeric($_GET['id']))) {
+        addEditTemplate();
+
+        // Add event to the system log.
+        $user_id = api_get_user_id();
+        $category = $_GET['category'];
+        Event::addEvent(
+            LOG_CONFIGURATION_SETTINGS_CHANGE,
+            LOG_CONFIGURATION_SETTINGS_CATEGORY,
+            $category,
+            api_get_utc_datetime(),
+            $user_id
+        );
+    } else {
+        if ('delete' == $action && is_numeric($_GET['id'])) {
+            deleteTemplate($_GET['id']);
+
+            // Add event to the system log
+            $user_id = api_get_user_id();
+            $category = $_GET['category'];
+            Event::addEvent(
+                LOG_CONFIGURATION_SETTINGS_CHANGE,
+                LOG_CONFIGURATION_SETTINGS_CATEGORY,
+                $category,
+                api_get_utc_datetime(),
+                $user_id
+            );
+        }
+        displayTemplates();
+    }
+}
+
+/**
+ * Display a sortable table with all the templates that the platform administrator has defined.
+ *
+ * @author Patrick Cool <patrick.cool@UGent.be>, Ghent University, Belgium
+ *
+ * @version August 2008
+ *
+ * @since v1.8.6
+ */
+function displayTemplates()
+{
+    $table = new SortableTable(
+        'templates',
+        'getNumberOfTemplates',
+        'getTemplateData',
+        1
+    );
+    $table->set_additional_parameters(
+        ['category' => Security::remove_XSS($_GET['category'])]
+    );
+    $table->set_header(0, get_lang('Image'), true, ['style' => 'width: 101px;']);
+    $table->set_header(1, get_lang('Title'));
+    $table->set_header(2, get_lang('Detail'), false, ['style' => 'width:50px;']);
+    $table->set_column_filter(2, 'actionsFilter');
+    $table->set_column_filter(0, 'searchImageFilter');
+    $table->display();
+}
+
+/**
+ * Gets the number of templates that are defined by the platform admin.
+ *
+ * @return int
+ *
+ * @author Patrick Cool <patrick.cool@UGent.be>, Ghent University, Belgium
+ *
+ * @version August 2008
+ *
+ * @since v1.8.6
+ */
+function getNumberOfTemplates()
+{
+    // Database table definition.
+    $table = Database::get_main_table('system_template');
+
+    // The sql statement.
+    $sql = "SELECT COUNT(id) AS total FROM $table";
+    $result = Database::query($sql);
+    $row = Database::fetch_array($result);
+
+    // Returning the number of templates.
+    return $row['total'];
+}
+
+/**
+ * Gets all the template data for the sortable table.
+ *
+ * @param int    $from            the start of the limit statement
+ * @param int    $number_of_items the number of elements that have to be retrieved from the database
+ * @param int    $column          the column that is
+ * @param string $direction       the sorting direction (ASC or DESC)
+ *
+ * @return array
+ *
+ * @author Patrick Cool <patrick.cool@UGent.be>, Ghent University, Belgium
+ *
+ * @version August 2008
+ *
+ * @since v1.8.6
+ */
+function getTemplateData($from, $number_of_items, $column, $direction)
+{
+    // Database table definition.
+    $table_system_template = Database::get_main_table('system_template');
+
+    $from = (int) $from;
+    $number_of_items = (int) $number_of_items;
+    $column = (int) $column;
+    $direction = !in_array(strtolower(trim($direction)), ['asc', 'desc']) ? 'asc' : $direction;
+    // The sql statement.
+    $sql = "SELECT id as col0, title as col1, id as col2 FROM $table_system_template";
+    $sql .= " ORDER BY col$column $direction ";
+    $sql .= " LIMIT $from,$number_of_items";
+    $result = Database::query($sql);
+    $return = [];
+    while ($row = Database::fetch_array($result)) {
+        $row['1'] = get_lang($row['1']);
+        $return[] = $row;
+    }
+    // Returning all the information for the sortable table.
+    return $return;
+}
+
+/**
+ * display the edit and delete icons in the sortable table.
+ *
+ * @param int $id the id of the template
+ *
+ * @return string code for the link to edit and delete the template
+ *
+ * @author Patrick Cool <patrick.cool@UGent.be>, Ghent University, Belgium
+ *
+ * @version August 2008
+ *
+ * @since v1.8.6
+ */
+function actionsFilter($id)
+{
+    $return = '<a href="settings.php?category=Templates&action=edit&id='.Security::remove_XSS($id).'">'.Display::getMdiIcon(ActionIcon::EDIT, 'ch-tool-icon', null, ICON_SIZE_SMALL, get_lang('Edit')).'</a>';
+    $return .= '<a href="settings.php?category=Templates&action=delete&id='.Security::remove_XSS($id).'" onClick="javascript:if(!confirm('."'".get_lang('Please confirm your choice')."'".')) return false;">'.Display::getMdiIcon(ActionIcon::DELETE, 'ch-tool-icon', null, ICON_SIZE_SMALL, get_lang('Delete')).'</a>';
+
+    return $return;
+}
+
+function searchImageFilter(int $id): string
+{
+    $em = Database::getManager();
+
+    /** @var SystemTemplate $template */
+    $template = $em->find(SystemTemplate::class, $id);
+
+    if (null !== $template->getImage()) {
+        $assetRepo = Container::getAssetRepository();
+        $imageUrl = $assetRepo->getAssetUrl($template->getImage());
+
+        return '<img src="'.$imageUrl.'" alt="'.get_lang('Template preview').'"/>';
+    } else {
+        return '<img src="'.api_get_path(WEB_PUBLIC_PATH).'img/template_thumb/noimage.gif" alt="'.get_lang('Preview not available').'"/>';
+    }
+}
+
+/**
+ * Add (or edit) a template. This function displays the form and also takes
+ * care of uploading the image and storing the information in the database.
+ *
+ * @author Patrick Cool <patrick.cool@UGent.be>, Ghent University, Belgium
+ *
+ * @version August 2008
+ *
+ * @since v1.8.6
+ */
+function addEditTemplate()
+{
+    $em = Database::getManager();
+    $id = isset($_GET['id']) ? (int) $_GET['id'] : 0;
+
+    $assetRepo = Container::getAssetRepository();
+
+    /** @var SystemTemplate $template */
+    $template = $id ? $em->find(SystemTemplate::class, $id) : new SystemTemplate();
+
+    $form = new FormValidator(
+        'template',
+        'post',
+        'settings.php?category=Templates&action='.Security::remove_XSS($_GET['action']).'&id='.$id
+    );
+
+    // Setting the form elements: the header.
+    if ('add' == $_GET['action']) {
+        $title = get_lang('Add a template');
+    } else {
+        $title = get_lang('Template edition');
+    }
+    $form->addElement('header', '', $title);
+
+    // Setting the form elements: the title of the template.
+    $form->addText('title', get_lang('Title'), false);
+    $form->addText('comment', get_lang('Description'), false);
+
+    // Setting the form elements: the content of the template (wysiwyg editor).
+    $form->addHtmlEditor(
+        'template_text',
+        get_lang('Text'),
+        true,
+        true,
+        ['ToolbarSet' => 'Documents', 'Width' => '100%', 'Height' => '400']
+    );
+
+    // Setting the form elements: the form to upload an image to be used with the template.
+    if (!$template->hasImage()) {
+        // Picture
+        $form->addFile(
+            'template_image',
+            get_lang('Add image'),
+            ['id' => 'picture', 'class' => 'picture-form', 'crop_image' => true, 'crop_ratio' => '1 / 1']
+        );
+        $allowedPictureTypes = api_get_supported_image_extensions(false);
+        $form->addRule('template_image', get_lang('Only PNG, JPG or GIF images allowed').' ('.implode(',', $allowedPictureTypes).')', 'filetype', $allowedPictureTypes);
+    }
+
+    // Setting the form elements: a little bit of information about the template image.
+    $form->addElement('static', 'file_comment', '', get_lang('This image will represent the template in the templates list. It should be no larger than 100x70 pixels'));
+
+    // Getting all the information of the template when editing a template.
+    if ('edit' == $_GET['action']) {
+        $defaults['template_id'] = $id;
+        $defaults['template_text'] = $template->getContent();
+        // Forcing get_lang().
+        $defaults['title'] = $template->getTitle();
+        $defaults['comment'] = $template->getComment();
+
+        // Adding an extra field: a hidden field with the id of the template we are editing.
+        $form->addElement('hidden', 'template_id');
+
+        // Adding an extra field: a preview of the image that is currently used.
+
+        if ($template->hasImage()) {
+            $imageUrl = $assetRepo->getAssetUrl($template->getImage());
+            $form->addElement(
+                'static',
+                'template_image_preview',
+                '',
+                '<img src="'.$imageUrl
+                    .'" alt="'.get_lang('Template preview')
+                    .'"/>'
+            );
+            $form->addCheckBox('delete_image', null, get_lang('Delete picture'));
+        } else {
+            $form->addElement(
+                'static',
+                'template_image_preview',
+                '',
+                '<img src="'.api_get_path(WEB_PUBLIC_PATH).'img/template_thumb/noimage.gif" alt="'.get_lang('Preview not available').'"/>'
+            );
+        }
+
+        // Setting the information of the template that we are editing.
+        $form->setDefaults($defaults);
+    }
+    // Setting the form elements: the submit button.
+    $form->addButtonSave(get_lang('Validate'), 'submit');
+
+    // Setting the rules: the required fields.
+    if (!$template->hasImage()) {
+        $form->addRule(
+            'template_image',
+            get_lang('Required field'),
+            'required'
+        );
+        $form->addRule('title', get_lang('Required field'), 'required');
+    }
+
+    // if the form validates (complies to all rules) we save the information,
+    // else we display the form again (with error message if needed)
+    if ($form->validate()) {
+        $check = Security::check_token('post');
+
+        if ($check) {
+            // Exporting the values.
+            $values = $form->exportValues();
+            $asset = null;
+            if (isset($values['delete_image']) && !empty($id)) {
+                deleteTemplateImage($id);
+            }
+
+            // Upload the file.
+            if (!empty($_FILES['template_image']['name'])) {
+                $picture = $_FILES['template_image'];
+                if (!empty($picture['name'])) {
+                    $asset = (new Asset())
+                        ->setCategory(Asset::SYSTEM_TEMPLATE)
+                        ->setTitle($picture['name'])
+                    ;
+                    if (!empty($values['picture_crop_result'])) {
+                        $asset->setCrop($values['picture_crop_result']);
+                    }
+                    $asset = $assetRepo->createFromRequest($asset, $picture);
+                }
+            }
+
+            // Store the information in the database (as insert or as update).
+            $bootstrap = api_get_bootstrap_and_font_awesome();
+            $viewport = '<meta name="viewport" content="width=device-width, initial-scale=1.0">';
+
+            if ('add' == $_GET['action']) {
+                $templateContent = '<head>'.$viewport.'<title>'.$values['title'].'</title>'.$bootstrap.'</head>'
+                    .$values['template_text'];
+                $template
+                    ->setTitle($values['title'])
+                    ->setComment(Security::remove_XSS($values['comment']))
+                    ->setContent(Security::remove_XSS($templateContent, COURSEMANAGERLOWSECURITY))
+                    ->setImage($asset);
+                $em->persist($template);
+                $em->flush();
+
+                // Display a feedback message.
+                echo Display::return_message(
+                    get_lang('Template added'),
+                    'confirm'
+                );
+                echo '<a href="settings.php?category=Templates&action=add">'.
+                    Display::getMdiIcon(ObjectIcon::TEMPLATE, 'ch-tool-icon', null, ICON_SIZE_MEDIUM, get_lang('Add a template')).
+                    '</a>';
+            } else {
+                $templateContent = '<head>'.$viewport.'<title>'.$values['title'].'</title>'.$bootstrap.'</head>'
+                    .$values['template_text'];
+
+                $template
+                    ->setTitle($values['title'])
+                    ->setContent(Security::remove_XSS($templateContent, COURSEMANAGERLOWSECURITY));
+
+                if ($asset) {
+                    $template->setImage($asset);
+                }
+
+                $em->persist($template);
+                $em->flush();
+
+                // Display a feedback message.
+                echo Display::return_message(get_lang('Template edited'), 'confirm');
+            }
+        }
+        Security::clear_token();
+        displayTemplates();
+    } else {
+        $token = Security::get_token();
+        $form->addElement('hidden', 'sec_token');
+        $form->setConstants(['sec_token' => $token]);
+        // Display the form.
+        $form->display();
+    }
+}
+
+/**
+ * Deletes the template picture as asset.
+ *
+ * @param int $id
+ */
+function deleteTemplateImage($id)
+{
+    $em = Database::getManager();
+
+    /** @var SystemTemplate $template */
+    $template = $em->find(SystemTemplate::class, $id);
+
+    if ($template && $template->hasImage()) {
+        $image = $template->getImage();
+        $em->remove($image);
+        $em->flush();
+    }
+}
+
+/**
+ * Delete a template.
+ *
+ * @param int $id the id of the template that has to be deleted
+ *
+ * @author Patrick Cool <patrick.cool@UGent.be>, Ghent University, Belgium
+ *
+ * @version August 2008
+ *
+ * @since v1.8.6
+ */
+function deleteTemplate($id)
+{
+    $id = intval($id);
+    // First we remove the image.
+    $table = Database::get_main_table('system_template');
+    $sql = "SELECT * FROM $table WHERE id = $id";
+    $result = Database::query($sql);
+    $row = Database::fetch_array($result);
+    if (!empty($row['image'])) {
+        @unlink(api_get_path(SYS_APP_PATH).'home/default_platform_document/template_thumb/'.$row['image']);
+    }
+
+    // Now we remove it from the database.
+    $sql = "DELETE FROM $table WHERE id = $id";
+    Database::query($sql);
+
+    deleteTemplateImage($id);
+
+    // Display a feedback message.
+    echo Display::return_message(get_lang('Template deleted'), 'confirm');
+}
+
+/**
+ * @param array $settings
+ * @param array $settings_by_access_list
+ *
+ * @throws \Doctrine\ORM\ORMException
+ * @throws \Doctrine\ORM\OptimisticLockException
+ * @throws \Doctrine\ORM\TransactionRequiredException
+ *
+ * @return FormValidator
+ */
+function generateSettingsForm($settings, $settings_by_access_list)
+{
+    global $_configuration, $settings_to_avoid, $convert_byte_to_mega_list;
+    $em = Database::getManager();
+    $table_settings_current = Database::get_main_table(TABLE_MAIN_SETTINGS);
+
+    $form = new FormValidator(
+        'settings',
+        'post',
+        'settings.php?category='.Security::remove_XSS($_GET['category'])
+    );
+
+    $form->addElement(
+        'hidden',
+        'search_field',
+        (!empty($_GET['search_field']) ? Security::remove_XSS($_GET['search_field']) : null)
+    );
+
+    $url_id = api_get_current_access_url_id();
+
+    $default_values = [];
+    $url_info = api_get_access_url($url_id);
+    $i = 0;
+    $addedSettings = [];
+    foreach ($settings as $row) {
+        if (in_array($row['variable'], array_keys($settings_to_avoid))) {
+            continue;
+        }
+
+        if (in_array($row['variable'], $addedSettings)) {
+            continue;
+        }
+
+        $addedSettings[] = $row['variable'];
+
+        if (api_get_multiple_access_url()) {
+            if (api_is_global_platform_admin()) {
+                if (0 == $row['access_url_locked']) {
+                    if (1 == $url_id) {
+                        if ('1' == $row['access_url_changeable']) {
+                            $form->addElement(
+                                'html',
+                                '<div class="float-right"><a class="share_this_setting" data_status = "0"  data_to_send = "'.$row['variable'].'" href="javascript:void(0);">'.
+                                Display::getMdiIcon(StateIcon::SHARED_VISIBILITY, 'ch-tool-icon', null, ICON_SIZE_MEDIUM, get_lang('Change setting visibility for the other portals')).'</a></div>'
+                            );
+                        } else {
+                            $form->addElement(
+                                'html',
+                                '<div class="float-right"><a class="share_this_setting" data_status = "1" data_to_send = "'.$row['variable'].'" href="javascript:void(0);">'.
+                                Display::getMdiIcon(StateIcon::SHARED_VISIBILITY, 'ch-tool-icon-disabled', null, ICON_SIZE_MEDIUM, get_lang('Change setting visibility for the other portals')).'</a></div>'
+                            );
+                        }
+                    } else {
+                        if ('1' == $row['access_url_changeable']) {
+                            $form->addElement(
+                                'html',
+                                '<div class="float-right">'.
+                                Display::getMdiIcon(StateIcon::SHARED_VISIBILITY, 'ch-tool-icon', null, ICON_SIZE_MEDIUM, get_lang('Change setting visibility for the other portals')).'</div>'
+                            );
+                        } else {
+                            $form->addElement(
+                                'html',
+                                '<div class="float-right">'.
+                                Display::getMdiIcon(StateIcon::SHARED_VISIBILITY, 'ch-tool-icon-disabled', null, ICON_SIZE_MEDIUM, get_lang('Change setting visibility for the other portals')).'</div>'
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        $hideme = [];
+        $hide_element = false;
+
+        if (1 != $_configuration['access_url']) {
+            if (0 == $row['access_url_changeable']) {
+                // We hide the element in other cases (checkbox, radiobutton) we 'freeze' the element.
+                $hide_element = true;
+                $hideme = ['disabled'];
+            } elseif (1 == $url_info['active']) {
+                // We show the elements.
+                if (empty($row['variable'])) {
+                    $row['variable'] = 0;
+                }
+                if (empty($row['subkey'])) {
+                    $row['subkey'] = 0;
+                }
+                if (empty($row['category'])) {
+                    $row['category'] = 0;
+                }
+                if (isset($settings_by_access_list[$row['variable']]) &&
+                    isset($settings_by_access_list[$row['variable']][$row['subkey']]) &&
+                    is_array($settings_by_access_list[$row['variable']][$row['subkey']][$row['category']])
+                ) {
+                    // We are sure that the other site have a selected value.
+                    if ('' != $settings_by_access_list[$row['variable']][$row['subkey']][$row['category']]['selected_value']) {
+                        $row['selected_value'] = $settings_by_access_list[$row['variable']][$row['subkey']][$row['category']]['selected_value'];
+                    }
+                }
+                // There is no else{} statement because we load the default $row['selected_value'] of the main Chamilo site.
+            }
+        }
+
+        switch ($row['type']) {
+            case 'textfield':
+                if (in_array($row['variable'], $convert_byte_to_mega_list)) {
+                    $form->addElement(
+                        'text',
+                        $row['variable'],
+                        [
+                            get_lang($row['title']),
+                            get_lang($row['comment']),
+                            get_lang('MB'),
+                        ],
+                        ['maxlength' => '8', 'aria-label' => get_lang($row['title'])]
+                    );
+                    $form->applyFilter($row['variable'], 'html_filter');
+                    $default_values[$row['variable']] = round($row['selected_value'] / 1024 / 1024, 1);
+                } elseif ('account_valid_duration' == $row['variable']) {
+                    $form->addElement(
+                        'text',
+                        $row['variable'],
+                        [
+                            get_lang($row['title']),
+                            get_lang($row['comment']),
+                        ],
+                        ['maxlength' => '5', 'aria-label' => get_lang($row['title'])]
+                    );
+                    $form->applyFilter($row['variable'], 'html_filter');
+
+                    // For platform character set selection:
+                    // Conversion of the textfield to a select box with valid values.
+                    $default_values[$row['variable']] = $row['selected_value'];
+                } elseif ('platform_charset' == $row['variable']) {
+                    break;
+                } else {
+                    $hideme['class'] = 'col-md-4';
+                    $hideme['aria-label'] = get_lang($row['title']);
+                    $form->addElement(
+                        'text',
+                        $row['variable'],
+                        [
+                            get_lang($row['title']),
+                            get_lang($row['comment']),
+                        ],
+                        $hideme
+                    );
+                    $form->applyFilter($row['variable'], 'html_filter');
+                    $default_values[$row['variable']] = $row['selected_value'];
+                }
+                break;
+            case 'textarea':
+                if ('header_extra_content' == $row['variable']) {
+                    $file = api_get_home_path().'header_extra_content.txt';
+                    $value = '';
+                    if (file_exists($file)) {
+                        $value = file_get_contents($file);
+                    }
+                    $form->addElement(
+                        'textarea',
+                        $row['variable'],
+                        [get_lang($row['title']), get_lang($row['comment'])],
+                        ['rows' => '10', 'id' => $row['variable']],
+                        $hideme
+                    );
+                    $default_values[$row['variable']] = $value;
+                } elseif ('footer_extra_content' == $row['variable']) {
+                    $file = api_get_home_path().'footer_extra_content.txt';
+                    $value = '';
+                    if (file_exists($file)) {
+                        $value = file_get_contents($file);
+                    }
+                    $form->addElement(
+                        'textarea',
+                        $row['variable'],
+                        [get_lang($row['title']), get_lang($row['comment'])],
+                        ['rows' => '10', 'id' => $row['variable']],
+                        $hideme
+                    );
+                    $default_values[$row['variable']] = $value;
+                } else {
+                    $form->addElement(
+                        'textarea',
+                        $row['variable'],
+                        [get_lang($row['title']),
+                        get_lang($row['comment']), ],
+                        ['rows' => '10', 'id' => $row['variable']],
+                        $hideme
+                    );
+                    $default_values[$row['variable']] = $row['selected_value'];
+                }
+                break;
+            case 'radio':
+                $values = api_get_settings_options($row['variable']);
+                $group = [];
+                if (is_array($values)) {
+                    foreach ($values as $key => $value) {
+                        $element = &$form->createElement(
+                            'radio',
+                            $row['variable'],
+                            '',
+                            get_lang($value['display_text']),
+                            $value['value']
+                        );
+                        if ($hide_element) {
+                            $element->freeze();
+                        }
+                        $group[] = $element;
+                    }
+                }
+                $form->addGroup(
+                    $group,
+                    $row['variable'],
+                    [get_lang($row['title']), get_lang($row['comment'])],
+                    null,
+                    false
+                );
+                $default_values[$row['variable']] = $row['selected_value'];
+                break;
+            case 'checkbox':
+                // 1. We collect all the options of this variable.
+                $sql = "SELECT * FROM $table_settings_current
+                        WHERE variable='".$row['variable']."' AND access_url =  1";
+
+                $result = Database::query($sql);
+                $group = [];
+                while ($rowkeys = Database::fetch_array($result)) {
+                    // Profile tab option should be hidden when the social tool is enabled.
+                    if ('true' == api_get_setting('allow_social_tool')) {
+                        if ('show_tabs' === $rowkeys['variable'] && 'my_profile' === $rowkeys['subkey']) {
+                            continue;
+                        }
+                    }
+
+                    // Hiding the gradebook option.
+                    if ('show_tabs' === $rowkeys['variable'] && 'my_gradebook' === $rowkeys['subkey']) {
+                        continue;
+                    }
+
+                    $element = &$form->createElement(
+                        'checkbox',
+                        $rowkeys['subkey'],
+                        '',
+                        get_lang($rowkeys['subkeytext'])
+                    );
+
+                    if (1 == $row['access_url_changeable']) {
+                        // 2. We look into the DB if there is a setting for a specific access_url.
+                        $access_url = $_configuration['access_url'];
+                        if (empty($access_url)) {
+                            $access_url = 1;
+                        }
+                        $sql = "SELECT selected_value FROM $table_settings_current
+                                WHERE
+                                    variable='".$rowkeys['variable']."' AND
+                                    subkey='".$rowkeys['subkey']."' AND
+                                    subkeytext='".$rowkeys['subkeytext']."' AND
+                                    access_url =  $access_url";
+                        $result_access = Database::query($sql);
+                        $row_access = Database::fetch_array($result_access);
+                        if ('true' === $row_access['selected_value'] && !$form->isSubmitted()) {
+                            $element->setChecked(true);
+                        }
+                    } else {
+                        if ('true' === $rowkeys['selected_value'] && !$form->isSubmitted()) {
+                            $element->setChecked(true);
+                        }
+                    }
+                    if ($hide_element) {
+                        $element->freeze();
+                    }
+                    $group[] = $element;
+                }
+                $form->addGroup(
+                    $group,
+                    $row['variable'],
+                    [get_lang($row['title']), get_lang($row['comment'])],
+                    null
+                );
+                break;
+            case 'link':
+                $form->addElement(
+                    'static',
+                    null,
+                    [get_lang($row['title']), get_lang($row['comment'])],
+                    get_lang('current value').' : '.$row['selected_value'],
+                    $hideme
+                );
+                break;
+            case 'select':
+                /*
+                * To populate the list of options, the select type dynamically calls a function that must be called select_ + the name of the variable being displayed.
+                * The functions being called must be added to the file settings.lib.php.
+                */
+                $form->addElement(
+                    'select',
+                    $row['variable'],
+                    [get_lang($row['title']), get_lang($row['comment'])],
+                    call_user_func('select_'.$row['variable']),
+                    $hideme
+                );
+                $default_values[$row['variable']] = $row['selected_value'];
+                break;
+            case 'custom':
+                break;
+            case 'select_course':
+                $courseSelectOptions = [];
+
+                if (!empty($row['selected_value'])) {
+                    $course = $em->find(Course::class, $row['selected_value']);
+
+                    $courseSelectOptions[$course->getId()] = $course->getTitle();
+                }
+
+                $form->addElement(
+                    'select_ajax',
+                    $row['variable'],
+                    [get_lang($row['title']), get_lang($row['comment'])],
+                    $courseSelectOptions,
+                    ['url' => api_get_path(WEB_AJAX_PATH).'course.ajax.php?a=search_course']
+                );
+                $default_values[$row['variable']] = $row['selected_value'];
+                break;
+        }
+
+        switch ($row['variable']) {
+            case 'pdf_export_watermark_enable':
+                $url = PDF::get_watermark(null);
+
+                if (false != $url) {
+                    $delete_url = '<a href="?delete_watermark">'.get_lang('Remove picture').' '.Display::getMdiIcon(ActionIcon::DELETE, 'ch-tool-icon', null, ICON_SIZE_SMALL, get_lang('Remove picture')).'</a>';
+                    $form->addElement('html', '<div style="max-height:100px; max-width:100px; margin-left:162px; margin-bottom:10px; clear:both;"><img src="'.$url.'" style="margin-bottom:10px;" />'.$delete_url.'</div>');
+                }
+
+                $form->addElement('file', 'pdf_export_watermark_path', get_lang('Upload a watermark image'));
+                $allowed_picture_types = ['jpg', 'jpeg', 'png', 'gif'];
+                $form->addRule(
+                    'pdf_export_watermark_path',
+                    get_lang('Only PNG, JPG or GIF images allowed').' ('.implode(',', $allowed_picture_types).')',
+                    'filetype',
+                    $allowed_picture_types
+                );
+
+                break;
+            case 'timezone_value':
+                $timezone = $row['selected_value'];
+                if (empty($timezone)) {
+                    $timezone = api_get_timezone();
+                }
+                $form->addLabel('', sprintf(get_lang('The local time in the portal timezone (%s) is %s'), $timezone, api_get_local_time()));
+                break;
+        }
+    } // end for
+
+    if (!empty($settings)) {
+        $form->setDefaults($default_values);
+    }
+    $form->addHtml('<div class="bottom_actions">');
+    $form->addButtonSave(get_lang('Save settings'));
+    $form->addHtml('</div>');
+
+    return $form;
+}
+
+/**
+ * Searches a platform setting in all categories except from the Plugins category.
+ *
+ * @param string $search
+ *
+ * @return array
+ */
+function searchSetting($search)
+{
+    if (empty($search)) {
+        return [];
+    }
+    $table_settings_current = Database::get_main_table(TABLE_MAIN_SETTINGS);
+    $sql = "SELECT * FROM $table_settings_current
+            WHERE category <> 'Plugins' ORDER BY id ASC ";
+    $result = Database::store_result(Database::query($sql), 'ASSOC');
+    $settings = [];
+
+    $search = api_strtolower($search);
+
+    if (!empty($result)) {
+        foreach ($result as $setting) {
+            $found = false;
+
+            $title = api_strtolower(get_lang($setting['title']));
+            // try the title
+            if (false === strpos($title, $search)) {
+                $comment = api_strtolower(get_lang($setting['comment']));
+                //Try the comment
+                if (false === strpos($comment, $search)) {
+                    //Try the variable name
+                    if (false === strpos($setting['variable'], $search)) {
+                        continue;
+                    } else {
+                        $found = true;
+                    }
+                } else {
+                    $found = true;
+                }
+            } else {
+                $found = true;
+            }
+            if ($found) {
+                $settings[] = $setting;
+            }
+        }
+    }
+
+    return $settings;
+}
+
+/**
+ * Helper function to generate a form elements group.
+ *
+ * @param FormValidator $form The form where the elements group has to be added
+ * @param string $elementName
+ * @param array $values Values to browse through
+ *
+ * @return array
+ */
+function formGenerateElementsGroup(FormValidator $form, string $elementName, array $values = []): array
+{
+    $group = [];
+    if (is_array($values)) {
+        foreach ($values as $key => $value) {
+            $element = &$form->createElement('radio', $elementName, '', get_lang($value['display_text']), $value['value']);
+            $group[] = $element;
+        }
+    }
+
+    return $group;
+}
+/**
+ * Helper function with allowed file types for CSS.
+ *
+ * @return array Array of file types (no indexes)
+ */
+function getAllowedFileTypes()
+{
+    $allowedFiles = [
+        'css',
+        'zip',
+        'jpeg',
+        'jpg',
+        'png',
+        'gif',
+        'ico',
+        'psd',
+        'xcf',
+        'svg',
+        'webp',
+        'woff',
+        'woff2',
+    ];
+
+    return $allowedFiles;
+}
+/**
+ * Helper function to set settings in the database.
+ *
+ * @param array $parameters List of values
+ * @param int   $accessUrl  The current access URL
+ */
+function setConfigurationSettingsInDatabase($parameters, $accessUrl)
+{
+    api_set_settings_category('Search', 'false', $accessUrl);
+    // Save the settings.
+    foreach ($parameters as $key => $value) {
+        api_set_setting($key, $value, null, null);
+    }
+}
+
+/**
+ * Helper function to show the status of the search settings table.
+ *
+ * @param array $data Data to show
+ */
+function showSearchSettingsTable($data)
+{
+    echo Display::tag('h3', get_lang('Settings'));
+    $table = new SortableTableFromArray($data);
+    $table->set_header(0, get_lang('Setting'), false);
+    $table->set_header(1, get_lang('Status'), false);
+    echo $table->display();
+}
+/**
+ * Helper function to show status table for each command line tool installed.
+ */
+function showSearchToolsStatusTable()
+{
+    //@todo windows support
+    if (false == api_is_windows_os()) {
+        $list_of_programs = ['pdftotext', 'ps2pdf', 'catdoc', 'html2text', 'unrtf', 'catppt', 'xls2csv'];
+        foreach ($list_of_programs as $program) {
+            $output = [];
+            $ret_val = null;
+            exec("which $program", $output, $ret_val);
+
+            if (!$output) {
+                $output[] = '';
+            }
+
+            $icon = Display::getMdiIcon(StateIcon::CLOSED_VISIBILITY, 'ch-tool-icon', null, ICON_SIZE_SMALL, get_lang('Not installed'));
+            if (!empty($output[0])) {
+                $icon = Display::getMdiIcon(StateIcon::OPEN_VISIBILITY, 'ch-tool-icon', null, ICON_SIZE_SMALL, get_lang('Installed'));
+            }
+            $data2[] = [$program, $output[0], $icon];
+        }
+        echo Display::tag('h3', get_lang('Programs needed to convert files'));
+        $table = new SortableTableFromArray($data2);
+        $table->set_header(0, get_lang('Software program'), false);
+        $table->set_header(1, get_lang('Path'), false);
+        $table->set_header(2, get_lang('Status'), false);
+        echo $table->display();
+    } else {
+        echo Display::return_message(
+            get_lang('You are using Chamilo in a Windows platform, sadly you can\'t convert documents in order to search the content using this tool'),
+            'warning'
+        );
+    }
+}
+/**
+ * Helper function to generate and show CSS Zip download message.
+ *
+ * @param string $style Style path
+ */
+function generateCSSDownloadLink($style)
+{
+    $arch = api_get_path(SYS_ARCHIVE_PATH).$style.'.zip';
+    $themeDir = Template::getThemeDir($style);
+    $dir = api_get_path(SYS_CSS_PATH).$themeDir;
+    $check = Security::check_abs_path(
+        $dir,
+        api_get_path(SYS_CSS_PATH).'themes'
+    );
+    if (is_dir($dir) && $check) {
+        $zip = new PclZip($arch);
+        // Remove path prefix except the style name and put file on disk
+        $zip->create($dir, PCLZIP_OPT_REMOVE_PATH, substr($dir, 0, -strlen($style)));
+        $url = api_get_path(WEB_CODE_PATH).'course_info/download.php?archive_path=&archive='.str_replace(api_get_path(SYS_ARCHIVE_PATH), '', $arch);
+
+        //@TODO: use more generic script to download.
+        $str = '<a class="btn btn--primary btn-large" href="'.$url.'">'.get_lang('Download the file').'</a>';
+        echo Display::return_message($str, 'normal', false);
+    } else {
+        echo Display::return_message(get_lang('The file was not found'), 'warning');
+    }
+}
+
+/**
+ * Get all settings of one category prepared for display in admin/settings.php.
+ *
+ * @param string $category
+ *
+ * @return array
+ */
+function getCategorySettings($category = '')
+{
+    $url_id = api_get_current_access_url_id();
+    $settings_by_access_list = [];
+
+    if (1 == $url_id) {
+        $settings = api_get_settings($category, 'group', $url_id);
+    } else {
+        $url_info = api_get_access_url($url_id);
+        if (1 == $url_info['active']) {
+            $categoryToSearch = $category;
+            if ('search_setting' == $category) {
+                $categoryToSearch = '';
+            }
+            // The default settings of Chamilo
+            $settings = api_get_settings($categoryToSearch, 'group', 1, 0);
+            // The settings that are changeable from a particular site.
+            $settings_by_access = api_get_settings($categoryToSearch, 'group', $url_id, 1);
+
+            foreach ($settings_by_access as $row) {
+                if (empty($row['variable'])) {
+                    $row['variable'] = 0;
+                }
+                if (empty($row['subkey'])) {
+                    $row['subkey'] = 0;
+                }
+                if (empty($row['category'])) {
+                    $row['category'] = 0;
+                }
+
+                // One more validation if is changeable.
+                if (1 == $row['access_url_changeable']) {
+                    $settings_by_access_list[$row['variable']][$row['subkey']][$row['category']] = $row;
+                } else {
+                    $settings_by_access_list[$row['variable']][$row['subkey']][$row['category']] = [];
+                }
+            }
+        }
+    }
+
+    if (isset($category) && 'search_setting' == $category) {
+        if (!empty($_REQUEST['search_field'])) {
+            $settings = searchSetting($_REQUEST['search_field']);
+        }
+    }
+
+    return [
+        'settings' => $settings,
+        'settings_by_access_list' => $settings_by_access_list,
+    ];
+}

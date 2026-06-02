@@ -1,0 +1,439 @@
+<?php
+
+/* For licensing terms, see /license.txt */
+
+/**
+ * Responses to AJAX calls.
+ */
+require_once __DIR__.'/../global.inc.php';
+
+$action = $_REQUEST['a'];
+$userId = api_get_user_id();
+$isPlatformAdmin = api_is_platform_admin();
+
+switch ($action) {
+    case 'add_course_vote':
+        $course_id = (int) $_REQUEST['course_id'];
+        $star = (int) $_REQUEST['star'];
+
+        if (!api_is_anonymous()) {
+            CourseManager::add_course_vote($userId, $star, $course_id, 0);
+        }
+        $point_info = CourseManager::get_course_ranking($course_id, 0);
+        // Close the session as we don't need it any further
+        session_write_close();
+        $ajax_url = api_get_path(WEB_AJAX_PATH).'course.ajax.php?a=add_course_vote';
+        $rating = Display::return_rating_system(
+            'star_'.$course_id,
+            $ajax_url.'&amp;course_id='.$course_id,
+            $point_info,
+            false
+        );
+        echo $rating;
+        break;
+    case 'get_user_courses':
+        // Only search my courses
+        if ($isPlatformAdmin || api_is_session_admin()) {
+            $requestUserId = (int) $_REQUEST['user_id'];
+            $list = CourseManager::get_courses_list_by_user_id(
+                $requestUserId,
+                false
+            );
+            if (!empty($list)) {
+                foreach ($list as $course) {
+                    $courseInfo = api_get_course_info_by_id($course['real_id']);
+                    echo $courseInfo['title'].'<br />';
+                }
+            } else {
+                echo get_lang('This user is not subscribed to any course');
+            }
+        }
+        break;
+    case 'get_my_courses_and_sessions':
+        // Search my courses and sessions allowed for admin, session admin, teachers
+        $currentCourseId = api_get_course_int_id();
+        $currentSessionId = api_get_session_id();
+        if ($isPlatformAdmin || api_is_session_admin() || api_is_allowed_to_edit()) {
+            $list = CourseManager::get_courses_list_by_user_id(
+                $userId,
+                true,
+                false,
+                false,
+                [],
+                true,
+                true
+            );
+
+            if (empty($list)) {
+                echo json_encode([]);
+                break;
+            }
+            // Close the session as we don't need it any further
+            session_write_close();
+
+            $courseList = [];
+            foreach ($list as $course) {
+                if (empty($course['real_id'])) {
+                    continue;
+                }
+                $courseInfo = api_get_course_info_by_id($course['real_id']);
+                $sessionId = 0;
+                if (!empty($course['session_id'])) {
+                    $sessionId = $course['session_id'];
+                }
+
+                $sessionName = '';
+                if (!empty($course['session_name'])) {
+                    $sessionName = ' ('.$course['session_name'].')';
+                }
+
+                // Skip current course/course session
+                if ($currentCourseId == $courseInfo['real_id'] && $sessionId == $currentSessionId) {
+                    continue;
+                }
+
+                $courseList['items'][] = [
+                    'id' => $courseInfo['real_id'].'_'.$sessionId,
+                    'text' => $courseInfo['title'].$sessionName,
+                ];
+            }
+
+            echo json_encode($courseList);
+        }
+        break;
+    case 'search_category':
+        $isAllowedToCreateCourse = api_is_allowed_to_create_course();
+        // Close the session as we don't need it any further
+        session_write_close();
+
+        if ($isPlatformAdmin || $isAllowedToCreateCourse) {
+            $categories = CourseCategory::searchCategoryByKeyword($_REQUEST['q']);
+
+            if (empty($categories)) {
+                echo json_encode([]);
+                break;
+            }
+
+            $categoryToAvoid = '';
+            if (!$isPlatformAdmin) {
+                $categoryToAvoid = api_get_setting('course.course_category_code_to_use_as_model');
+            }
+            $list = [];
+            foreach ($categories as $item) {
+                $categoryCode = $item['code'];
+                if (!empty($categoryToAvoid) && $categoryToAvoid == $categoryCode) {
+                    continue;
+                }
+                $list['items'][] = [
+                    'id' => $item['id'],
+                    'text' => strip_tags($item['title']),
+                ];
+            }
+
+            echo json_encode($list);
+        }
+        break;
+    case 'search_course':
+        $isTeacher = api_is_teacher();
+        // Close the session as we don't need it any further
+        session_write_close();
+
+        if ($isTeacher || $isPlatformAdmin) {
+            if (!empty($_GET['session_id'])) {
+                //if session is defined, lets find only courses of this session
+                $courseList = SessionManager::get_course_list_by_session_id(
+                    $_GET['session_id'],
+                    $_GET['q']
+                );
+            } else {
+                //if session is not defined lets search all courses STARTING with $_GET['q']
+                //TODO change this function to search not only courses STARTING with $_GET['q']
+                if ($isPlatformAdmin) {
+                    $courseList = CourseManager::get_courses_list(
+                        0,
+                        0,
+                        'title',
+                        'ASC',
+                        -1,
+                        $_GET['q'],
+                        null,
+                        true
+                    );
+                } elseif ($isTeacher) {
+                    $courseList = CourseManager::get_course_list_of_user_as_course_admin($userId, $_GET['q']);
+                    $category = api_get_setting('course.course_category_code_to_use_as_model');
+                    if (!empty($category)) {
+                        $alreadyAdded = [];
+                        if (!empty($courseList)) {
+                            $alreadyAdded = array_column($courseList, 'id');
+                        }
+                        $coursesInCategory = CourseCategory::getCoursesInCategory($category, $_GET['q']);
+                        foreach ($coursesInCategory as $course) {
+                            if (!in_array($course['id'], $alreadyAdded)) {
+                                $courseList[] = $course;
+                            }
+                        }
+                    }
+                }
+            }
+
+            $results = [];
+
+            if (empty($courseList)) {
+                echo json_encode([]);
+                break;
+            }
+
+            foreach ($courseList as $course) {
+                $title = $course['title'];
+
+                if (!empty($course['category_code'])) {
+                    $parents = CourseCategory::getParentsToString($course['category_code']);
+                    $title = $parents.$course['title'];
+                }
+
+                $results['items'][] = [
+                    'id' => $course['id'],
+                    'text' => $title.' ('.$course['code'].') ',
+                ];
+            }
+
+            echo json_encode($results);
+        }
+        break;
+    case 'search_course_by_session':
+        // Close the session as we don't need it any further
+        session_write_close();
+
+        if ($isPlatformAdmin) {
+            $results = SessionManager::get_course_list_by_session_id($_GET['session_id'], $_GET['q']);
+            $results2 = [];
+            if (is_array($results) && !empty($results)) {
+                foreach ($results as $item) {
+                    $item2 = [];
+                    foreach ($item as $id => $internal) {
+                        if ('id' === $id) {
+                            $item2[$id] = $internal;
+                        }
+                        if ('title' === $id) {
+                            $item2['text'] = $internal;
+                        }
+                    }
+                    $results2[] = $item2;
+                }
+                echo json_encode($results2);
+            } else {
+                echo json_encode([]);
+            }
+        }
+        break;
+    case 'search_course_by_session_all':
+        // Close the session as we don't need it any further
+        session_write_close();
+
+        if ($isPlatformAdmin) {
+            if ('TODOS' === $_GET['session_id'] || 'T' === $_GET['session_id']) {
+                $_GET['session_id'] = '%';
+            }
+
+            $results = SessionManager::get_course_list_by_session_id_like(
+                $_GET['session_id'],
+                $_GET['q']
+            );
+            $results2 = ['items' => []];
+            if (!empty($results)) {
+                foreach ($results as $item) {
+                    $item2 = [];
+                    foreach ($item as $id => $internal) {
+                        if ('id' == $id) {
+                            $item2[$id] = $internal;
+                        }
+                        if ('title' == $id) {
+                            $item2['text'] = $internal;
+                        }
+                    }
+                    $results2['items'][] = $item2;
+                }
+            }
+
+            echo json_encode($results2);
+        }
+        break;
+    case 'search_user_by_course':
+        $sessionId = $_GET['session_id'];
+        $course = api_get_course_info_by_id($_GET['course_id']);
+
+        $userIsSubscribedInCourse = CourseManager::is_user_subscribed_in_course(
+            $userId,
+            $course['code'],
+            !empty($sessionId),
+            $sessionId
+        );
+
+        if ($isPlatformAdmin || $userIsSubscribedInCourse) {
+            $json = [
+                'items' => [],
+            ];
+
+            $keyword = Database::escape_string($_GET['q']);
+            $status = 0;
+            if (empty($sessionId)) {
+                $status = STUDENT;
+            }
+
+            $userList = CourseManager::get_user_list_from_course_code(
+                $course['code'],
+                $sessionId,
+                null,
+                null,
+                $status,
+                false,
+                false,
+                false,
+                [],
+                [],
+                [],
+                true,
+                [],
+                $_GET['q']
+            );
+            // Close the session as we don't need it any further
+            session_write_close();
+
+            foreach ($userList as $user) {
+                $userCompleteName = api_get_person_name($user['firstname'], $user['lastname']);
+
+                $json['items'][] = [
+                    'id' => $user['user_id'],
+                    'text' => "{$user['username']} ($userCompleteName)",
+                ];
+            }
+
+            echo json_encode($json);
+        }
+        break;
+    case 'search_survey_by_course':
+        // Close the session as we don't need it any further
+        session_write_close();
+
+        if ($isPlatformAdmin) {
+            $survey = Database::get_course_table(TABLE_SURVEY);
+
+            $sql = "SELECT survey_id as id, title, anonymous
+                    FROM $survey
+                    WHERE
+                      c_id = %d AND
+                      session_id = %d AND
+                      title LIKE '%s'";
+
+            $sql_query = sprintf(
+                $sql,
+                (int) $_GET['course_id'],
+                (int) $_GET['session_id'],
+                '%'.Database::escape_string($_GET['q']).'%'
+            );
+            $result = Database::query($sql_query);
+            while ($survey = Database::fetch_assoc($result)) {
+                $survey['title'] .= (1 == $survey['anonymous']) ? ' ('.get_lang('Anonymous').')' : '';
+                $data[] = [
+                    'id' => $survey['id'],
+                    'text' => strip_tags(html_entity_decode($survey['title'])),
+                ];
+            }
+            if (!empty($data)) {
+                echo json_encode($data);
+            } else {
+                echo json_encode([]);
+            }
+        }
+        break;
+    case 'display_sessions_courses':
+        if (!$isPlatformAdmin && !api_is_session_admin() && !api_is_teacher()) {
+            echo json_encode([]);
+            break;
+        }
+        // Close the session as we don't need it any further
+        session_write_close();
+
+        $sessionId = (int) $_GET['session'];
+        $userTable = Database::get_main_table(TABLE_MAIN_USER);
+        $coursesData = SessionManager::get_course_list_by_session_id($sessionId);
+
+        $courses = [];
+
+        foreach ($coursesData as $courseId => $course) {
+            $coachData = SessionManager::getCoachesByCourseSession($sessionId, $courseId);
+            $coachName = '';
+            if (!empty($coachData)) {
+                $userResult = Database::select('lastname,firstname', $userTable, [
+                    'where' => [
+                        'user_id = ?' => $coachData[0],
+                    ],
+                ], 'first');
+
+                $coachName = api_get_person_name($userResult['firstname'], $userResult['lastname']);
+            }
+
+            $courses[] = [
+                'id' => $courseId,
+                'name' => $course['title'],
+                'coachName' => $coachName,
+            ];
+        }
+
+        echo json_encode($courses);
+        break;
+    case 'course_logout':
+        $logoutInfo = [
+            'uid' => $userId,
+            'cid' => api_get_course_int_id(),
+            'sid' => api_get_session_id(),
+        ];
+
+        $logInfo = [
+            'tool' => 'close-window',
+            'action' => 'exit',
+        ];
+        Event::registerLog($logInfo);
+        // Close the session as we don't need it any further
+        session_write_close();
+
+        $result = (int) Event::courseLogout($logoutInfo);
+        echo $result;
+        break;
+    case 'search_room':
+        if (!$isPlatformAdmin && !api_is_session_admin() && !api_is_teacher()) {
+            echo json_encode([]);
+            break;
+        }
+        $em = Database::getManager();
+        $term = isset($_REQUEST['q']) ? trim($_REQUEST['q']) : '';
+        $qb = $em->createQueryBuilder()
+            ->select('r.id, r.title, b.title AS branchTitle')
+            ->from(\Chamilo\CoreBundle\Entity\Room::class, 'r')
+            ->leftJoin('r.branch', 'b')
+            ->orderBy('b.title', 'ASC')
+            ->addOrderBy('r.title', 'ASC');
+
+        if (!empty($term)) {
+            $qb->where('r.title LIKE :term OR b.title LIKE :term')
+                ->setParameter('term', '%'.$term.'%');
+        }
+
+        $rooms = $qb->getQuery()->getArrayResult();
+        $result = [];
+        foreach ($rooms as $room) {
+            $label = !empty($room['branchTitle'])
+                ? $room['branchTitle'].' - '.$room['title']
+                : $room['title'];
+            $result['items'][] = [
+                'id' => $room['id'],
+                'text' => $label,
+            ];
+        }
+        echo json_encode($result);
+        break;
+    default:
+        echo '';
+}
+exit;

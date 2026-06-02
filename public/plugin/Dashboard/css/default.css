@@ -1,0 +1,11 @@
+/* Dashboard plugin for Chamilo 2 */
+
+.dashboard-plugin {
+    margin: 0 auto;
+    max-width: 1440px;
+}
+
+.dashboard-plugin .table th,
+.dashboard-plugin .table td {
+    vertical-align: middle;
+}

@@ -1,0 +1,52 @@
+.p-divider {
+  &-horizontal {
+    @apply flex w-full relative items-center px-2
+      before:absolute before:block before:top-1/2 before:left-0 before:w-full before:content-[''] before:border-t before:border-solid before:border-gray-25;
+  }
+
+  &-horizontal &-content {
+    @apply px-2;
+  }
+
+  &-vertical {
+    @apply flex min-h-full relative justify-center mx-4 py-2
+      before:absolute before:block before:top-0 before:left-1/2 before:h-full before:content-[''] before:border-l before:border-solid before:border-gray-25;
+  }
+
+  &.p-divider-vertical &-content {
+    @apply py-2;
+  }
+
+  &-content {
+    @apply z-[1] bg-white text-gray-50 font-semibold text-caption
+      hover:text-support-3;
+  }
+
+  &-solid#{&}-horizontal:before {
+    border-block-start-style: solid;
+  }
+
+  &-solid#{&}-vertical:before {
+    border-inline-start-style: solid;
+  }
+
+  &-dashed#{&}-horizontal:before {
+    border-block-start-style: dashed;
+  }
+
+  &-dashed#{&}-vertical:before {
+    border-inline-start-style: dashed;
+  }
+
+  &-dotted#{&}-horizontal:before {
+    border-block-start-style: dotted;
+  }
+
+  &-dotted#{&}-vertical:before {
+    border-inline-start-style: dotted;
+  }
+
+  &-left, &-right {
+    @apply rtl:flex-row-reverse;
+  }
+}

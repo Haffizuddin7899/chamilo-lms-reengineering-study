@@ -1,0 +1,61 @@
+<template>
+  <div class="flex items-center gap-2">
+    <BaseButton
+      :label="label"
+      :size="size"
+      icon="attachment"
+      type="primary"
+      @click="showFileDialog"
+    />
+    <p class="text-gray-90">
+      {{ fileName }}
+    </p>
+    <input
+      ref="inputFile"
+      :accept="accept"
+      class="hidden"
+      type="file"
+    />
+  </div>
+</template>
+
+<script setup>
+import BaseButton from "./BaseButton.vue"
+import { onMounted, ref } from "vue"
+import { sizeValidator } from "./validators"
+
+defineProps({
+  label: {
+    type: String,
+    required: true,
+  },
+  accept: {
+    type: String,
+    default: undefined,
+  },
+  size: {
+    type: String,
+    default: "normal",
+    validator: sizeValidator,
+  },
+})
+
+const emit = defineEmits(["fileSelected"])
+
+const inputFile = ref(null)
+const fileName = ref("")
+
+onMounted(() => {
+  inputFile.value.addEventListener("change", fileSelected)
+})
+
+const fileSelected = () => {
+  let file = inputFile.value.files[0]
+  fileName.value = file.name
+  emit("fileSelected", file)
+}
+
+const showFileDialog = () => {
+  inputFile.value.click()
+}
+</script>

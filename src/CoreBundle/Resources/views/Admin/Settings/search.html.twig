@@ -1,0 +1,315 @@
+{% extends "@ChamiloCore/Layout/layout_one_col.html.twig" %}
+{% from '@ChamiloCore/Admin/Settings/actions.html.twig' import update %}
+{% set namespace = app.request.get('namespace') %}
+{% set content_width = 'w-full' %}
+
+{% block content %}
+    <div class="flex gap-6">
+        <div class="w-64 shrink-0">
+            {% include '@ChamiloCore/Admin/Settings/menu.html.twig' %}
+        </div>
+        <div class="flex-1 min-w-0">
+            <div class="q-card p-4">
+
+                {{ form_start(search_form, {
+                    action: path('chamilo_platform_settings_search'),
+                    method: 'POST',
+                    attr: { class: 'w-full form-horizontal' }
+                }) }}
+                {{ form_widget(search_form) }}
+                {{ form_end(search_form) }}
+
+                <div class="my-6 space-y-10">
+                    {% for category, form in form_list %}
+
+                        <div class="{% if not loop.first %}mt-12 {% endif %}mb-4 pb-2 border-b border-gray-25">
+                            {% set label = namespace_labels[category]
+                                ?? (category == 'cas' ? 'CAS'
+                                : (category == 'lp' ? 'Learning path'|trans
+                                : (category|capitalize)|trans)) %}
+                            <h3 class="text-gray-90 text-h6 font-semibold tracking-wide">
+                                {{ category == 'cas' ? label : label|title }}
+                            </h3>
+                        </div>
+
+                        <div class="box box-primary">
+                            <div class="box-body min-w-0">
+                                {{ form_errors(form) }}
+
+                                <div class="{{ content_width }} max-w-none">
+
+                                    {{ form_start(form, {
+                                        action: path('chamilo_platform_settings', { 'namespace': category, 'keyword': keyword }),
+                                        method: 'POST',
+                                        attr: { class: 'form-horizontal !w-full !max-w-none', novalidate: 'novalidate' }
+                                    }) }}
+
+                                    <input type="hidden" name="_partial" value="1"/>
+
+                                    {% for field in form %}
+                                        {% set fieldName = field.vars.name %}
+                                        {% set isHidden  = 'hidden' in field.vars.block_prefixes %}
+
+                                        {% set isLockedOnMain =
+                                            locked_map is defined
+                                            and locked_map[fieldName] is defined
+                                            and locked_map[fieldName] == 1
+                                        %}
+
+                                        {% set hideOnSubUrlBecauseLocked =
+                                            current_url_id is defined
+                                            and current_url_id != 1
+                                            and isLockedOnMain
+                                        %}
+
+                                        {% set isDisabledOnSubUrl =
+                                            current_url_id is defined
+                                            and current_url_id != 1
+                                            and (
+                                            (changeable_map is defined and changeable_map[fieldName] is defined and changeable_map[fieldName] == 0)
+                                            or isLockedOnMain
+                                            )
+                                        %}
+
+                                        {% set isUnsupported = (category ~ '.' ~ fieldName) in (unsupported_settings ?? []) %}
+
+                                        {% if hideOnSubUrlBecauseLocked %}
+                                            <div class="hidden">
+                                                {% if field.vars.compound is defined and field.vars.compound %}
+                                                    {% for child in field %}
+                                                        {{ form_widget(child, { attr: { disabled: 'disabled' } }) }}
+                                                    {% endfor %}
+                                                {% else %}
+                                                    {{ form_widget(field, { attr: { disabled: 'disabled' } }) }}
+                                                {% endif %}
+                                            </div>
+                                        {% elseif isHidden %}
+                                            {{ form_widget(field) }}
+                                        {% else %}
+                                            <div class="mb-6 rounded-lg bg-white shadow-lg">
+                                                <div class="flex justify-between items-start border-l-8 border-primary rounded-l-lg rounded-tr-lg bg-support-2 px-4 py-4 -ml-2 text-body-2">
+                                                    <h4 class="text-gray-90 text-body-1 font-semibold">{{ field.vars.label|trans }}</h4>
+
+                                                    <div class="flex items-center gap-2">
+                                                        {% set templateId = null %}
+                                                        {% if template_map is defined and template_map[fieldName] is defined %}
+                                                            {% set templateId = template_map[fieldName] %}
+                                                        {% elseif template_map_by_category is defined
+                                                            and template_map_by_category[category] is defined
+                                                            and template_map_by_category[category][fieldName] is defined %}
+                                                            {% set templateId = template_map_by_category[category][fieldName] %}
+                                                        {% endif %}
+
+                                                        {% if templateId %}
+                                                            <a href="#"
+                                                               class="text-info hover:text-info-dark show-template flex items-center gap-2"
+                                                               data-template-id="{{ templateId }}"
+                                                               title="{{ 'Show JSON Template'|trans }}">
+                                                                <i class="mdi mdi-information-outline text-info text-lg"></i>
+                                                                <span class="text-body-2">{{ 'Show JSON Template'|trans }}</span>
+                                                            </a>
+                                                        {% endif %}
+
+                                                        {% if changeable_map is defined %}
+                                                            {% set changeable = changeable_map[fieldName] is defined ? changeable_map[fieldName] : 1 %}
+
+                                                            {% if isLockedOnMain %}
+                                                                <span
+                                                                        class="ml-1 text-gray-50 text-lg flex items-center cursor-not-allowed"
+                                                                        title="{{ 'Setting is globally locked (access_url_locked=1)'|trans }}"
+                                                                >
+                                                                    <i class="mdi mdi-eye-off text-gray-50 text-xl"></i>
+                                                                    <i class="mdi mdi-lock-outline text-gray-50 text-lg ml-1"></i>
+                                                                </span>
+                                                            {% elseif can_toggle_multiurl_setting %}
+                                                                <button
+                                                                        type="button"
+                                                                        class="ml-1 toggle-changeable flex items-center justify-center"
+                                                                        data-variable="{{ fieldName }}"
+                                                                        data-status="{{ changeable }}"
+                                                                        title="{{ changeable ? 'Setting is editable on sub-URLs'|trans : 'Setting locked for sub-URLs'|trans }}"
+                                                                >
+                                                                    {% if changeable %}
+                                                                        <i class="mdi mdi-eye text-primary text-xl"></i>
+                                                                    {% else %}
+                                                                        <i class="mdi mdi-eye-off text-gray-50 text-xl"></i>
+                                                                    {% endif %}
+                                                                </button>
+                                                            {% else %}
+                                                                <span
+                                                                        class="ml-1 text-gray-50 text-lg flex items-center cursor-default"
+                                                                        title="{{ changeable ? 'Setting is editable on sub-URLs'|trans : 'Setting locked for sub-URLs'|trans }}"
+                                                                >
+                                                                    {% if changeable %}
+                                                                        <i class="mdi mdi-eye text-gray-50 text-xl"></i>
+                                                                    {% else %}
+                                                                        <i class="mdi mdi-eye-off text-gray-50 text-xl"></i>
+                                                                    {% endif %}
+                                                                </span>
+                                                            {% endif %}
+                                                        {% endif %}
+                                                    </div>
+                                                </div>
+
+                                                <div class="p-4 border-t border-gray-25 space-y-2">
+                                                    {% set verticalChoiceFields = ['active_tools_on_create', 'course_hide_tools'] %}
+
+                                                    {% set isChoice   = 'choice' in field.vars.block_prefixes %}
+                                                    {% set isExpanded = isChoice and (field.vars.expanded is defined and field.vars.expanded) %}
+                                                    {% set isMultiple = isChoice and (field.vars.multiple is defined and field.vars.multiple) %}
+
+                                                    {% if (field.vars.name in verticalChoiceFields) and isExpanded and isMultiple %}
+                                                        <div class="flex flex-col gap-2">
+                                                            {% for child in field %}
+                                                                {% set childAttr = isDisabledOnSubUrl ? { disabled: 'disabled' } : {} %}
+                                                                <label class="inline-flex items-center gap-2">
+                                                                    {{ form_widget(child, { attr: childAttr }) }}
+                                                                    <span>{{ child.vars.label }}</span>
+                                                                </label>
+                                                            {% endfor %}
+                                                        </div>
+                                                    {% else %}
+                                                        {% set widgetAttr = (isDisabledOnSubUrl or isUnsupported) ? { disabled: 'disabled' } : {} %}
+
+                                                        {{ form_widget(field, { attr: widgetAttr }) }}
+                                                    {% endif %}
+
+                                                    {% if field.vars.help is not empty %}
+                                                        <p class="text-gray-50 text-body-2 italic">{{ field.vars.help|raw }}</p>
+                                                    {% endif %}
+
+                                                    {% if isUnsupported %}
+                                                        <p class="flex items-center gap-2 text-warning text-body-2">
+                                                            <i class="mdi mdi-clock-outline text-lg"></i>
+                                                            {{ 'This setting is not yet implemented in this version.'|trans }}
+                                                        </p>
+                                                    {% endif %}
+
+                                                    {{ form_errors(field) }}
+                                                </div>
+                                            </div>
+                                        {% endif %}
+                                    {% endfor %}
+
+                                    {{ form_rest(form) }}
+
+                                    <hr class="my-10 border-gray-25" />
+                                    <div class="mt-4 mb-10">
+                                        {{ update() }}
+                                    </div>
+
+                                    {{ form_end(form, { render_rest: false }) }}
+                                </div>
+                            </div>
+                        </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="jsonTemplateOverlay" class="fixed inset-0 bg-gray-90/50 hidden z-40"></div>
+
+    <div id="jsonTemplateModal" class="fixed inset-0 hidden z-50 flex items-center justify-center">
+        <div class="bg-white rounded-lg border border-gray-50 shadow-2xl max-w-3xl w-full mx-4">
+            <div class="flex justify-between items-center px-6 py-4 border-b border-gray-25">
+                <h2 class="text-lg font-bold text-gray-90" id="jsonTemplateModalLabel">
+                    {{ 'JSON Template'|trans }}
+                </h2>
+                <button id="closeJsonTemplateModal" class="text-gray-50 hover:text-gray-90 text-2xl leading-none">
+                    &times;
+                </button>
+            </div>
+            <div class="p-6">
+                <div id="jsonTemplateDescription" class="mb-4 text-gray-90 border-gray-20 text-body-2"></div>
+                <pre id="jsonTemplateContent" class="bg-gray-15 p-4 rounded text-sm text-gray-90 overflow-auto max-h-[50vh]"></pre>
+            </div>
+        </div>
+    </div>
+
+    <script>
+      (function () {
+        const overlay = document.getElementById('jsonTemplateOverlay');
+        const modal = document.getElementById('jsonTemplateModal');
+
+        function closeTemplate() {
+          overlay?.classList.add('hidden');
+          modal?.classList.add('hidden');
+        }
+
+        function openTemplate(templateId) {
+          if (!templateId) return;
+
+          fetch('/admin/settings/template/' + templateId)
+            .then(r => r.json())
+            .then(data => {
+              if (!data.json_example) {
+                alert('{{ "Template not found."|trans }}');
+                return;
+              }
+              document.getElementById('jsonTemplateModalLabel').innerText =
+                data.variable || '{{ "JSON Template"|trans }}';
+              document.getElementById('jsonTemplateDescription').innerText =
+                data.description || '';
+              try {
+                const obj = JSON.parse(data.json_example);
+                document.getElementById('jsonTemplateContent').innerText = JSON.stringify(obj, null, 2);
+              } catch (e) {
+                document.getElementById('jsonTemplateContent').innerText = data.json_example;
+              }
+
+              overlay?.classList.remove('hidden');
+              modal?.classList.remove('hidden');
+            })
+            .catch(err => {
+              console.error('AJAX error:', err);
+            });
+        }
+
+        document.getElementById('closeJsonTemplateModal')?.addEventListener('click', closeTemplate);
+        overlay?.addEventListener('click', closeTemplate);
+
+        // Event delegation for template links + multiURL toggle
+        document.addEventListener('click', function (e) {
+          const templateLink = e.target.closest('.show-template');
+          if (templateLink) {
+            e.preventDefault();
+            openTemplate(templateLink.dataset.templateId);
+            return;
+          }
+
+          const btn = e.target.closest('.toggle-changeable');
+          if (!btn) {
+            return;
+          }
+
+          const variable = btn.dataset.variable;
+          const current = btn.dataset.status === '1' ? 1 : 0;
+          const next = current === 1 ? 0 : 1;
+
+          fetch('/admin/settings/toggle_changeable', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ variable: variable, status: next })
+          })
+            .then(r => r.json())
+            .then(data => {
+              if (data.result === 1) {
+                btn.dataset.status = String(next);
+                btn.innerHTML = next
+                  ? '<i class="mdi mdi-eye text-primary text-xl"></i>'
+                  : '<i class="mdi mdi-eye-off text-gray-50 text-xl"></i>';
+              } else if (data.error) {
+                console.error('Failed to update changeable state:', data.error);
+                alert(data.error);
+              } else {
+                console.error('Failed to update changeable state:', data);
+              }
+            })
+            .catch(err => {
+              console.error('AJAX error:', err);
+            });
+        });
+      })();
+    </script>
+{% endblock %}

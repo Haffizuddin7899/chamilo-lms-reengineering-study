@@ -1,0 +1,32 @@
+<?php
+
+/* For licensing terms, see /license.txt */
+
+declare(strict_types=1);
+
+namespace Chamilo\CoreBundle\ApiResource;
+
+use Chamilo\CoreBundle\Entity\ResourceNode;
+use Chamilo\CoreBundle\Tool\AbstractTool;
+use Symfony\Component\Serializer\Attribute\Groups;
+
+class CourseTool extends AbstractResource
+{
+    #[Groups(['ctool:read'])]
+    public ?int $iid = null;
+
+    #[Groups(['ctool:read'])]
+    public string $title;
+
+    #[Groups(['ctool:read'])]
+    public ?bool $visibility = null;
+
+    #[Groups(['ctool:read'])]
+    public AbstractTool $tool;
+
+    #[Groups(['ctool:read'])]
+    public ?ResourceNode $resourceNode = null;
+
+    #[Groups(['ctool:read'])]
+    public string $url;
+}

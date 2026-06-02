@@ -1,0 +1,151 @@
+<?php
+
+declare(strict_types=1);
+
+/* For licensing terms, see /license.txt */
+
+namespace Chamilo\CoreBundle\Controller;
+
+use Chamilo\CoreBundle\Helpers\PageHelper;
+use Chamilo\CoreBundle\Settings\SettingsManager;
+use Symfony\Component\HttpFoundation\Request;
+use Symfony\Component\HttpFoundation\Response;
+use Symfony\Component\Routing\Attribute\Route;
+use Symfony\Component\Security\Http\Attribute\IsGranted;
+
+class IndexController extends BaseController
+{
+    #[Route('/', name: 'index', options: ['expose' => true], methods: ['GET', 'POST'])]
+    #[Route('/sessions', name: 'sessions')]
+    #[Route('/sessions/{extra}', name: 'sessions_options')]
+    #[Route('/admin/{vueRouting}', name: 'admin_vue_entrypoint', requirements: ['vueRouting' => '.+'])]
+    #[Route('/home', name: 'home', options: ['expose' => true], methods: ['GET', 'POST'])]
+    #[Route('/login', name: 'login', options: ['expose' => true], methods: ['GET', 'POST'])]
+    #[Route('/faq', name: 'faq', options: ['expose' => true], methods: ['GET', 'POST'])]
+    #[Route('/demo', name: 'demo', options: ['expose' => true], methods: ['GET', 'POST'])]
+    #[Route('/course/{cid}/home', name: 'chamilo_core_course_home')]
+    #[Route('/courses', name: 'courses', options: ['expose' => true], methods: ['GET', 'POST'])]
+    #[Route('/catalogue/{slug}', name: 'catalogue', options: ['expose' => true], methods: ['GET', 'POST'])]
+    #[Route('/resources/ccalendarevent', name: 'resources_ccalendarevent', methods: ['GET'])]
+    #[Route('/resources/courses', name: 'resources_courses', methods: ['GET'])]
+    #[Route('/resources/courses/{vueRouting}', name: 'resources_courses_vue_entrypoint', requirements: ['vueRouting' => '.+'], methods: ['GET'])]
+    #[Route('/resources/document/{nodeId}/manager', name: 'resources_filemanager', methods: ['GET'])]
+    #[Route('/resources/lp/{node}/advanced-access', name: 'resources_lp_advanced_access', methods: ['GET'])]
+    #[Route('/resources/accessurl/{id}/delete', name: 'access_url_delete', methods: ['GET'])]
+    #[Route('/account/home', name: 'chamilo_core_account_home', options: ['expose' => true])]
+    #[Route('/social', name: 'chamilo_core_socialnetwork', options: ['expose' => true])]
+    #[Route('/social/{vueRouting}', name: 'chamilo_core_socialnetwork_vue_entrypoint', requirements: ['vueRouting' => '.+'], options: ['expose' => true])]
+    #[Route('/admin', name: 'admin', options: ['expose' => true])]
+    #[Route('/admin-dashboard', name: 'admin_dashboard_entry', options: ['expose' => true])]
+    #[Route('/admin-dashboard/{vueRouting}', name: 'admin_dashboard_vue_entry', requirements: ['vueRouting' => '.+'])]
+    #[Route('/my-services', name: 'my_services_entry', options: ['expose' => true])]
+    #[Route('/my-services/{vueRouting}', name: 'my_services_vue_entry', requirements: ['vueRouting' => '.+'], options: ['expose' => true])]
+    #[Route('/p/{slug}', name: 'public_page')]
+    #[Route('/skill/wheel', name: 'skill_wheel')]
+    #[Route('/skill/ranking', name: 'skill_ranking')]
+    #[Route('/access-url/auth-sources', methods: ['GET'])]
+    public function index(Request $request, PageHelper $pageHelper): Response
+    {
+        $customPageResponse = $pageHelper->getCustomAccessPageResponse(
+            $request,
+            null !== $this->getUser()
+        );
+
+        if (null !== $customPageResponse) {
+            return $customPageResponse;
+        }
+
+        return $this->render('@ChamiloCore/Layout/no_layout.html.twig', ['content' => '']);
+    }
+
+    #[Route('/registration', name: 'custom_registration', options: ['expose' => true], methods: ['GET'])]
+    public function registration(Request $request, PageHelper $pageHelper): Response
+    {
+        if (!$request->query->has('normal') && null === $this->getUser()) {
+            $customPageResponse = $pageHelper->getCustomPageResponse(
+                PageHelper::CUSTOM_PAGE_REGISTRATION
+            );
+
+            if (null !== $customPageResponse) {
+                return $customPageResponse;
+            }
+        }
+
+        return $this->redirect($request->getBasePath().'/main/auth/registration.php');
+    }
+
+    #[Route('/registration-feedback', name: 'custom_registration_feedback', options: ['expose' => true], methods: ['GET'])]
+    public function registrationFeedback(Request $request, PageHelper $pageHelper): Response
+    {
+        if (!$request->query->has('normal') && null === $this->getUser()) {
+            $customPageResponse = $pageHelper->getCustomPageResponse(
+                PageHelper::CUSTOM_PAGE_REGISTRATION_FEEDBACK
+            );
+
+            if (null !== $customPageResponse) {
+                return $customPageResponse;
+            }
+        }
+
+        return $this->redirect($request->getBasePath().'/login?normal=1');
+    }
+
+    #[Route('/lost-password', name: 'custom_lost_password', options: ['expose' => true], methods: ['GET'])]
+    public function lostPassword(Request $request, PageHelper $pageHelper): Response
+    {
+        if (!$request->query->has('normal') && null === $this->getUser()) {
+            $customPageResponse = $pageHelper->getCustomPageResponse(
+                PageHelper::CUSTOM_PAGE_LOST_PASSWORD
+            );
+
+            if (null !== $customPageResponse) {
+                return $customPageResponse;
+            }
+        }
+
+        return $this->redirect($request->getBasePath().'/main/auth/lostPassword.php');
+    }
+
+    /**
+     * Toggle the student view action.
+     */
+    #[Route('/toggle_student_view', methods: ['GET'])]
+    #[IsGranted('ROLE_USER')]
+    public function toggleStudentView(Request $request, SettingsManager $settingsManager): Response
+    {
+        if ('true' !== $settingsManager->getSetting('course.student_view_enabled')) {
+            throw $this->createAccessDeniedException();
+        }
+
+        if (!$this->isGranted('ROLE_ADMIN') && !$this->isGranted('ROLE_TEACHER')) {
+            throw $this->createAccessDeniedException();
+        }
+
+        $sessionHandler = $request->getSession();
+        $current = $sessionHandler->get('studentview', 'teacherview');
+
+        $requestedStudentView = $request->query->get('isStudentView');
+        $next = null;
+
+        if (null !== $requestedStudentView) {
+            $requestedStudentView = strtolower((string) $requestedStudentView);
+
+            if (\in_array($requestedStudentView, ['1', 'true', 'yes', 'on'], true)) {
+                $next = 'studentview';
+            } elseif (\in_array($requestedStudentView, ['0', 'false', 'no', 'off'], true)) {
+                $next = 'teacherview';
+            }
+        }
+
+        if (null === $next) {
+            // Default to teacher view when not set, then flip to student view on the first click.
+            // This ensures the first click really enters Student View.
+            $next = ('studentview' === $current) ? 'teacherview' : 'studentview';
+        }
+
+        $sessionHandler->set('studentview', $next);
+
+        // Keep a plain text response to avoid breaking existing callers.
+        return new Response($next);
+    }
+}

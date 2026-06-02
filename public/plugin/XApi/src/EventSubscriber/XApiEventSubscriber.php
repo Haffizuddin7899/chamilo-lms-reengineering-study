@@ -1,0 +1,574 @@
+<?php
+
+/* For licensing terms, see /license.txt */
+
+declare(strict_types=1);
+
+use Chamilo\CoreBundle\Entity\TrackEAttempt;
+use Chamilo\CoreBundle\Entity\TrackEExercise;
+use Chamilo\CoreBundle\Event\AbstractEvent;
+use Chamilo\CoreBundle\Event\CourseCreatedEvent;
+use Chamilo\CoreBundle\Event\Events;
+use Chamilo\CoreBundle\Event\ExerciseEndedEvent;
+use Chamilo\CoreBundle\Event\ExerciseQuestionAnsweredEvent;
+use Chamilo\CoreBundle\Event\LearningPathEndedEvent;
+use Chamilo\CoreBundle\Event\LearningPathItemViewedEvent;
+use Chamilo\CoreBundle\Event\PortfolioCommentEditedEvent;
+use Chamilo\CoreBundle\Event\PortfolioCommentScoredEvent;
+use Chamilo\CoreBundle\Event\PortfolioItemAddedEvent;
+use Chamilo\CoreBundle\Event\PortfolioItemCommentedEvent;
+use Chamilo\CoreBundle\Event\PortfolioItemDownloadedEvent;
+use Chamilo\CoreBundle\Event\PortfolioItemEditedEvent;
+use Chamilo\CoreBundle\Event\PortfolioItemHighlightedEvent;
+use Chamilo\CoreBundle\Event\PortfolioItemScoredEvent;
+use Chamilo\CoreBundle\Event\PortfolioItemViewedEvent;
+use Chamilo\CourseBundle\Entity\CLpView;
+use Chamilo\CourseBundle\Entity\CLpItemView;
+use Chamilo\CourseBundle\Entity\CQuizQuestion;
+use Chamilo\PluginBundle\XApi\ToolExperience\Statement\LearningPathCompleted;
+use Chamilo\PluginBundle\XApi\ToolExperience\Statement\LearningPathItemViewed;
+use Chamilo\PluginBundle\XApi\ToolExperience\Statement\PortfolioCommentEdited;
+use Chamilo\PluginBundle\XApi\ToolExperience\Statement\PortfolioCommentScored;
+use Chamilo\PluginBundle\XApi\ToolExperience\Statement\PortfolioDownloaded;
+use Chamilo\PluginBundle\XApi\ToolExperience\Statement\PortfolioItemCommented;
+use Chamilo\PluginBundle\XApi\ToolExperience\Statement\PortfolioItemEdited;
+use Chamilo\PluginBundle\XApi\ToolExperience\Statement\PortfolioItemHighlighted;
+use Chamilo\PluginBundle\XApi\ToolExperience\Statement\PortfolioItemScored;
+use Chamilo\PluginBundle\XApi\ToolExperience\Statement\PortfolioItemShared;
+use Chamilo\PluginBundle\XApi\ToolExperience\Statement\PortfolioItemViewed;
+use Chamilo\PluginBundle\XApi\ToolExperience\Statement\QuizCompleted;
+use Chamilo\PluginBundle\XApi\ToolExperience\Statement\QuizQuestionAnswered;
+use Doctrine\ORM\Exception\NotSupported;
+use Doctrine\ORM\Exception\ORMException;
+use Doctrine\ORM\OptimisticLockException;
+use Doctrine\ORM\TransactionRequiredException;
+use Symfony\Component\EventDispatcher\EventSubscriberInterface;
+use Chamilo\CoreBundle\Entity\XApiSharedStatement;
+
+class XApiEventSubscriber implements EventSubscriberInterface
+{
+    use XApiActivityTrait;
+
+    protected XApiPlugin $plugin;
+
+    public function __construct()
+    {
+        $this->plugin = XApiPlugin::create();
+    }
+
+    public static function getSubscribedEvents(): array
+    {
+        return [
+            Events::COURSE_CREATED => 'onCreateCourse',
+
+            Events::EXERCISE_QUESTION_ANSWERED => 'onExerciseQuestionAnswered',
+            Events::EXERCISE_ENDED => 'onExerciseEnded',
+
+            Events::LP_ITEM_VIEWED => 'onLpItemViewed',
+            Events::LP_ENDED => 'onLpEnded',
+
+            Events::PORTFOLIO_ITEM_ADDED => 'onPortfolioItemAdded',
+            Events::PORTFOLIO_ITEM_EDITED => 'onPortfolioItemEdited',
+            Events::PORTFOLIO_ITEM_VIEWED => 'onPortfolioItemViewed',
+            Events::PORTFOLIO_ITEM_COMMENTED => 'onPortfolioItemCommented',
+            Events::PORTFOLIO_ITEM_HIGHLIGHTED => 'onPortfolioItemHighlighted',
+            Events::PORTFOLIO_DOWNLOADED => 'onPortfolioItemDownloaded',
+            Events::PORTFOLIO_ITEM_SCORED => 'onPortfolioItemScored',
+            Events::PORTFOLIO_COMMENT_SCORED => 'onPortfolioCommentScored',
+            Events::PORTFOLIO_COMMENT_EDITED => 'onPortfolioCommentEdited',
+        ];
+    }
+
+    public function onCreateCourse(CourseCreatedEvent $event): void
+    {
+        if (!$this->plugin->isEnabled()) {
+            return;
+        }
+
+        $course = $event->getCourse();
+
+        if (AbstractEvent::TYPE_POST === $event->getType() && $course) {
+            $this->plugin->addCourseToolForTinCan($course->getId());
+        }
+    }
+
+    /**
+     * @throws ORMException
+     * @throws OptimisticLockException
+     * @throws NotSupported
+     * @throws TransactionRequiredException
+     */
+    public function onExerciseQuestionAnswered(ExerciseQuestionAnsweredEvent $event): void
+    {
+        if (
+            !$this->plugin->isEnabled()
+            || 'true' !== $this->plugin->get(XApiPlugin::SETTING_LRS_QUIZ_QUESTION_ACTIVE)
+        ) {
+            return;
+        }
+
+        $em = Database::getManager();
+        $attemptRepo = $em->getRepository(TrackEAttempt::class);
+
+        $exe = $em->find(TrackEExercise::class, $event->getTrackingExeId());
+        $question = $em->find(CQuizQuestion::class, $event->getQuestionId());
+
+        if (!$exe || !$question) {
+            return;
+        }
+
+        $attempt = $attemptRepo->findOneBy([
+            'trackExercise' => $exe,
+            'questionId' => $question->getIid(),
+        ]);
+
+        $quiz = $exe->getQuiz();
+
+        if (!$attempt || !$quiz) {
+            return;
+        }
+
+        $statement = (new QuizQuestionAnswered($attempt, $question, $quiz))->generate();
+        $this->saveSharedStatement($statement);
+    }
+
+    /**
+     * @throws OptimisticLockException
+     * @throws ORMException
+     * @throws TransactionRequiredException
+     */
+    public function onExerciseEnded(ExerciseEndedEvent $event): void
+    {
+        if (
+            !$this->plugin->isEnabled()
+            || 'true' !== $this->plugin->get(XApiPlugin::SETTING_LRS_QUIZ_ACTIVE)
+        ) {
+            return;
+        }
+
+        $em = Database::getManager();
+
+        $exe = $em->find(TrackEExercise::class, $event->getTrackingExeId());
+
+        if (!$exe) {
+            return;
+        }
+
+        $quiz = $exe->getQuiz();
+
+        if (!$quiz) {
+            return;
+        }
+
+        $statement = (new QuizCompleted($exe, $quiz))->generate();
+        $this->saveSharedStatement($statement);
+    }
+
+    /**
+     * @throws ORMException
+     * @throws OptimisticLockException
+     * @throws TransactionRequiredException
+     */
+    public function onLpItemViewed(LearningPathItemViewedEvent $event): void
+    {
+        if (
+            !$this->plugin->isEnabled()
+            || 'true' !== $this->plugin->get(XApiPlugin::SETTING_LRS_LP_ITEM_ACTIVE)
+        ) {
+            return;
+        }
+
+        $em = Database::getManager();
+
+        /** @var CLpItemView|null $lpItemView */
+        $lpItemView = $em->find(CLpItemView::class, $event->getItemViewId());
+
+        if (!$lpItemView) {
+            return;
+        }
+
+        $lpItem = $lpItemView->getItem();
+
+        if (!$lpItem || 'quiz' === $lpItem->getItemType()) {
+            return;
+        }
+
+        $lpView = $lpItemView->getView();
+
+        if (!$lpView) {
+            return;
+        }
+
+        $statement = (new LearningPathItemViewed($lpItemView, $lpItem, $lpView))->generate();
+        $this->saveSharedStatement($statement);
+    }
+
+    /**
+     * @throws OptimisticLockException
+     * @throws ORMException
+     * @throws TransactionRequiredException
+     */
+    public function onLpEnded(LearningPathEndedEvent $event): void
+    {
+        if (
+            !$this->plugin->isEnabled()
+            || 'true' !== $this->plugin->get(XApiPlugin::SETTING_LRS_LP_ACTIVE)
+        ) {
+            return;
+        }
+
+        $em = Database::getManager();
+
+        /** @var CLpView|null $lpView */
+        $lpView = $em->find(CLpView::class, $event->getLpViewId());
+
+        if (!$lpView) {
+            return;
+        }
+
+        $lp = $lpView->getLp();
+
+        if (!$lp) {
+            return;
+        }
+
+        $statement = (new LearningPathCompleted($lpView, $lp))->generate();
+
+        if ($this->isDuplicateLearningPathCompletedStatement($statement)) {
+            return;
+        }
+
+        $this->saveSharedStatement($statement);
+    }
+
+    /**
+     * @throws OptimisticLockException
+     * @throws ORMException
+     */
+    public function onPortfolioItemAdded(PortfolioItemAddedEvent $event): void
+    {
+        if (
+            !$this->plugin->isEnabled()
+            || 'true' !== $this->plugin->get(XApiPlugin::SETTING_LRS_PORTFOLIO_ACTIVE)
+        ) {
+            return;
+        }
+
+        $item = $event->getPortfolio();
+
+        if (!$item) {
+            return;
+        }
+
+        $statement = (new PortfolioItemShared($item))->generate();
+        $this->saveSharedStatement($statement);
+    }
+
+    /**
+     * @throws OptimisticLockException
+     * @throws ORMException
+     */
+    public function onPortfolioItemEdited(PortfolioItemEditedEvent $event): void
+    {
+        if (
+            !$this->plugin->isEnabled()
+            || 'true' !== $this->plugin->get(XApiPlugin::SETTING_LRS_PORTFOLIO_ACTIVE)
+        ) {
+            return;
+        }
+
+        $item = $event->getPortfolio();
+
+        if (!$item) {
+            return;
+        }
+
+        $statement = (new PortfolioItemEdited($item))->generate();
+        $this->saveSharedStatement($statement);
+    }
+
+    /**
+     * @throws OptimisticLockException
+     * @throws ORMException
+     */
+    public function onPortfolioItemViewed(PortfolioItemViewedEvent $event): void
+    {
+        if (
+            !$this->plugin->isEnabled()
+            || 'true' !== $this->plugin->get(XApiPlugin::SETTING_LRS_PORTFOLIO_ACTIVE)
+        ) {
+            return;
+        }
+
+        $item = $event->getPortfolio();
+
+        if (!$item) {
+            return;
+        }
+
+        $statement = (new PortfolioItemViewed($item))->generate();
+        $this->saveSharedStatement($statement);
+    }
+
+    /**
+     * @throws OptimisticLockException
+     * @throws ORMException
+     */
+    public function onPortfolioItemCommented(PortfolioItemCommentedEvent $event): void
+    {
+        if (
+            !$this->plugin->isEnabled()
+            || 'true' !== $this->plugin->get(XApiPlugin::SETTING_LRS_PORTFOLIO_ACTIVE)
+        ) {
+            return;
+        }
+
+        $comment = $event->getComment();
+
+        if (!$comment) {
+            return;
+        }
+
+        $statement = (new PortfolioItemCommented($comment))->generate();
+        $this->saveSharedStatement($statement);
+    }
+
+    public function onPortfolioItemHighlighted(PortfolioItemHighlightedEvent $event): void
+    {
+        if (
+            !$this->plugin->isEnabled()
+            || 'true' !== $this->plugin->get(XApiPlugin::SETTING_LRS_PORTFOLIO_ACTIVE)
+        ) {
+            return;
+        }
+
+        $item = $event->getPortfolio();
+
+        if (!$item) {
+            return;
+        }
+
+        $statement = (new PortfolioItemHighlighted($item))->generate();
+        $this->saveSharedStatement($statement);
+    }
+
+    /**
+     * @throws OptimisticLockException
+     * @throws ORMException
+     */
+    public function onPortfolioItemDownloaded(PortfolioItemDownloadedEvent $event): void
+    {
+        if (
+            !$this->plugin->isEnabled()
+            || 'true' !== $this->plugin->get(XApiPlugin::SETTING_LRS_PORTFOLIO_ACTIVE)
+        ) {
+            return;
+        }
+
+        $owner = $event->getOwner();
+
+        if (!$owner) {
+            return;
+        }
+
+        $statement = (new PortfolioDownloaded($owner))->generate();
+        $this->saveSharedStatement($statement);
+    }
+
+    public function onPortfolioItemScored(PortfolioItemScoredEvent $event): void
+    {
+        if (
+            !$this->plugin->isEnabled()
+            || 'true' !== $this->plugin->get(XApiPlugin::SETTING_LRS_PORTFOLIO_ACTIVE)
+        ) {
+            return;
+        }
+
+        $item = $event->getPortfolio();
+
+        if (!$item) {
+            return;
+        }
+
+        $statement = (new PortfolioItemScored($item))->generate();
+        $this->saveSharedStatement($statement);
+    }
+
+    /**
+     * @throws OptimisticLockException
+     * @throws ORMException
+     */
+    public function onPortfolioCommentScored(PortfolioCommentScoredEvent $event): void
+    {
+        if (
+            !$this->plugin->isEnabled()
+            || 'true' !== $this->plugin->get(XApiPlugin::SETTING_LRS_PORTFOLIO_ACTIVE)
+        ) {
+            return;
+        }
+
+        $comment = $event->getComment();
+
+        if (!$comment) {
+            return;
+        }
+
+        $statement = (new PortfolioCommentScored($comment))->generate();
+        $this->saveSharedStatement($statement);
+    }
+
+    /**
+     * @throws OptimisticLockException
+     * @throws ORMException
+     */
+    public function onPortfolioCommentEdited(PortfolioCommentEditedEvent $event): void
+    {
+        if (
+            !$this->plugin->isEnabled()
+            || 'true' !== $this->plugin->get(XApiPlugin::SETTING_LRS_PORTFOLIO_ACTIVE)
+        ) {
+            return;
+        }
+
+        $comment = $event->getComment();
+
+        if (!$comment) {
+            return;
+        }
+
+        $statement = (new PortfolioCommentEdited($comment))->generate();
+        $this->saveSharedStatement($statement);
+    }
+
+    private function isDuplicateLearningPathCompletedStatement(array $statement, int $windowSeconds = 30): bool
+    {
+        $candidateKey = $this->buildLearningPathCompletedDedupKey($statement);
+
+        if (null === $candidateKey) {
+            return false;
+        }
+
+        $candidateTimestamp = $this->extractStatementTimestamp($statement);
+
+        if (null === $candidateTimestamp) {
+            return false;
+        }
+
+        $em = Database::getManager();
+
+        /** @var XApiSharedStatement[] $recentStatements */
+        $recentStatements = $em
+            ->getRepository(XApiSharedStatement::class)
+            ->findBy([], ['id' => 'DESC'], 50)
+        ;
+
+        foreach ($recentStatements as $recentStatement) {
+            $payload = $recentStatement->getStatement();
+
+            if (!is_array($payload) || empty($payload)) {
+                continue;
+            }
+
+            $recentKey = $this->buildLearningPathCompletedDedupKey($payload);
+
+            if (null === $recentKey || $recentKey !== $candidateKey) {
+                continue;
+            }
+
+            $recentTimestamp = $this->extractStatementTimestamp($payload);
+
+            if (null === $recentTimestamp) {
+                continue;
+            }
+
+            if (abs($candidateTimestamp - $recentTimestamp) <= $windowSeconds) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function buildLearningPathCompletedDedupKey(array $statement): ?string
+    {
+        $verbId = (string) ($statement['verb']['id'] ?? '');
+        $activityType = (string) ($statement['object']['definition']['type'] ?? '');
+        $actorMbox = strtolower(trim((string) ($statement['actor']['mbox'] ?? '')));
+        $objectId = $this->normalizeLearningPathActivityId((string) ($statement['object']['id'] ?? ''));
+
+        if (
+            'http://activitystrea.ms/schema/1.0/complete' !== $verbId
+            || 'http://adlnet.gov/expapi/activities/lesson' !== $activityType
+            || '' === $actorMbox
+            || '' === $objectId
+        ) {
+            return null;
+        }
+
+        return sha1($actorMbox.'|'.$objectId.'|'.$verbId);
+    }
+
+    private function normalizeLearningPathActivityId(string $activityId): string
+    {
+        $activityId = trim($activityId);
+
+        if ('' === $activityId) {
+            return '';
+        }
+
+        $parts = parse_url($activityId);
+
+        if (false === $parts) {
+            return $activityId;
+        }
+
+        $normalized = '';
+
+        if (isset($parts['scheme'])) {
+            $normalized .= $parts['scheme'].'://';
+        }
+
+        if (isset($parts['host'])) {
+            $normalized .= $parts['host'];
+        }
+
+        if (isset($parts['port'])) {
+            $normalized .= ':'.$parts['port'];
+        }
+
+        $normalized .= $parts['path'] ?? '';
+
+        $query = [];
+
+        if (!empty($parts['query'])) {
+            parse_str($parts['query'], $query);
+        }
+
+        unset($query['origin']);
+
+        ksort($query);
+
+        if (!empty($query)) {
+            $normalized .= '?'.http_build_query($query);
+        }
+
+        return $normalized;
+    }
+
+    private function extractStatementTimestamp(array $statement): ?int
+    {
+        $timestamp = $statement['timestamp'] ?? null;
+
+        if (!is_string($timestamp) || '' === trim($timestamp)) {
+            return null;
+        }
+
+        $value = strtotime($timestamp);
+
+        if (false === $value) {
+            return null;
+        }
+
+        return $value;
+    }
+}

@@ -1,0 +1,70 @@
+.admin-index {
+  @apply grid gap-4 grid-cols-1 md:grid-cols-2 xl:grid-cols-3 items-start;
+
+  &__block-container {
+    @apply h-full;
+    position: relative;
+    .p-card-body {
+      padding-bottom: 60px;
+    }
+  }
+
+  &__block-container--full {
+    @apply col-span-1 md:col-span-2 xl:col-span-3;
+  }
+
+  .p-menu {
+    @apply border-none m-0 p-0 w-full;
+
+    &-item {
+      &-content {
+      }
+
+      &-link {
+        @apply px-3 py-2;
+      }
+
+      &-label {
+        @apply text-body-2;
+      }
+    }
+  }
+
+  .block-admin-version__form {
+    @apply space-y-3;
+
+    p {
+      @apply text-body-2;
+    }
+  }
+}
+
+.admin-colors {
+  &__container {
+    @apply flex flex-col md:flex-row mt-6;
+  }
+
+  &__form {
+    @apply w-full md:w-3/5;
+  }
+
+  &__form-fields {
+    @apply mt-4;
+  }
+
+  &__preview {
+    @apply flex w-full md:w-2/5;
+  }
+}
+.admin-block__bg-image {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 50px;
+  background-repeat: repeat-x;
+  background-position: center bottom;
+  background-size: auto 50px;
+  opacity: 0.20;
+  pointer-events: none;
+}

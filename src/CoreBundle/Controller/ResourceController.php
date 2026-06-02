@@ -1,0 +1,976 @@
+<?php
+
+declare(strict_types=1);
+
+/* For licensing terms, see /license.txt */
+
+namespace Chamilo\CoreBundle\Controller;
+
+use Chamilo\CoreBundle\Entity\Course;
+use Chamilo\CoreBundle\Entity\ResourceFile;
+use Chamilo\CoreBundle\Entity\ResourceLink;
+use Chamilo\CoreBundle\Entity\ResourceNode;
+use Chamilo\CoreBundle\Entity\Session;
+use Chamilo\CoreBundle\Entity\User;
+use Chamilo\CoreBundle\Helpers\CourseToolAccessTracker;
+use Chamilo\CoreBundle\Helpers\ResourceFileHelper;
+use Chamilo\CoreBundle\Helpers\UserHelper;
+use Chamilo\CoreBundle\Repository\ResourceFileRepository;
+use Chamilo\CoreBundle\Repository\ResourceNodeRepository;
+use Chamilo\CoreBundle\Repository\ResourceWithLinkInterface;
+use Chamilo\CoreBundle\Repository\TrackEDownloadsRepository;
+use Chamilo\CoreBundle\Security\Authorization\Voter\ResourceNodeVoter;
+use Chamilo\CoreBundle\Tool\ToolChain;
+use Chamilo\CoreBundle\Traits\ControllerTrait;
+use Chamilo\CoreBundle\Traits\CourseControllerTrait;
+use Chamilo\CoreBundle\Traits\GradebookControllerTrait;
+use Chamilo\CoreBundle\Traits\ResourceControllerTrait;
+use Chamilo\CourseBundle\Controller\CourseControllerInterface;
+use Chamilo\CourseBundle\Entity\CTool;
+use Chamilo\CourseBundle\Repository\CLinkRepository;
+use Chamilo\CourseBundle\Repository\CShortcutRepository;
+use Chamilo\CourseBundle\Repository\CToolRepository;
+use Chamilo\LtiBundle\Entity\ExternalTool;
+use Doctrine\Common\Collections\ArrayCollection;
+use Doctrine\Common\Collections\Criteria;
+use Doctrine\ORM\EntityManagerInterface;
+use enshrined\svgSanitize\Sanitizer as SvgSanitizer;
+use Symfony\Bundle\SecurityBundle\Security;
+use Symfony\Component\Filesystem\Exception\FileNotFoundException;
+use Symfony\Component\HttpFoundation\JsonResponse;
+use Symfony\Component\HttpFoundation\RedirectResponse;
+use Symfony\Component\HttpFoundation\Request;
+use Symfony\Component\HttpFoundation\Response;
+use Symfony\Component\HttpFoundation\ResponseHeaderBag;
+use Symfony\Component\HttpFoundation\StreamedResponse;
+use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
+use Symfony\Component\HttpKernel\Exception\BadRequestHttpException;
+use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
+use Symfony\Component\Routing\Attribute\Route;
+use Symfony\Component\Routing\RouterInterface;
+use Symfony\Component\Serializer\SerializerInterface;
+use ZipStream\Option\Archive;
+use ZipStream\ZipStream;
+
+use const JSON_HEX_AMP;
+use const JSON_HEX_APOS;
+use const JSON_HEX_QUOT;
+use const JSON_HEX_TAG;
+use const PHP_EOL;
+
+/**
+ * @author Julio Montoya <gugli100@gmail.com>.
+ */
+#[Route('/r')]
+class ResourceController extends AbstractResourceController implements CourseControllerInterface
+{
+    use ControllerTrait;
+    use CourseControllerTrait;
+    use GradebookControllerTrait;
+    use ResourceControllerTrait;
+
+    public function __construct(
+        private readonly UserHelper $userHelper,
+        private readonly ResourceNodeRepository $resourceNodeRepository,
+        private readonly ResourceFileRepository $resourceFileRepository,
+        private readonly CourseToolAccessTracker $courseToolAccessTracker
+    ) {}
+
+    #[Route(path: '/{tool}/{type}/{id}/disk_space', methods: ['GET', 'POST'], name: 'chamilo_core_resource_disk_space')]
+    public function diskSpace(Request $request): Response
+    {
+        $nodeId = $request->get('id');
+        $repository = $this->getRepositoryFromRequest($request);
+
+        /** @var ResourceNode $resourceNode */
+        $resourceNode = $repository->getResourceNodeRepository()->find($nodeId);
+
+        $this->denyAccessUnlessGranted(
+            ResourceNodeVoter::VIEW,
+            $resourceNode,
+            $this->trans('Unauthorised access to resource')
+        );
+
+        $course = $this->getCourse();
+        $totalSize = 0;
+        if (null !== $course) {
+            $totalSize = $course->getDiskQuota();
+        }
+
+        $size = $repository->getResourceNodeRepository()->getSize(
+            $resourceNode,
+            $repository->getResourceType(),
+            $course
+        );
+
+        $labels[] = $course->getTitle();
+        $data[] = $size;
+        $sessions = $course->getSessions();
+
+        foreach ($sessions as $sessionRelCourse) {
+            $session = $sessionRelCourse->getSession();
+
+            $labels[] = $course->getTitle().' - '.$session->getTitle();
+            $size = $repository->getResourceNodeRepository()->getSize(
+                $resourceNode,
+                $repository->getResourceType(),
+                $course,
+                $session
+            );
+            $data[] = $size;
+        }
+
+        /*$groups = $course->getGroups();
+        foreach ($groups as $group) {
+            $labels[] = $course->getTitle().' - '.$group->getTitle();
+            $size = $repository->getResourceNodeRepository()->getSize(
+                $resourceNode,
+                $repository->getResourceType(),
+                $course,
+                null,
+                $group
+            );
+            $data[] = $size;
+        }*/
+
+        $used = array_sum($data);
+        $labels[] = $this->trans('Free space on disk');
+        $data[] = $totalSize - $used;
+
+        return $this->render(
+            '@ChamiloCore/Resource/disk_space.html.twig',
+            [
+                'resourceNode' => $resourceNode,
+                'labels' => $labels,
+                'data' => $data,
+            ]
+        );
+    }
+
+    /**
+     * View file of a resource node.
+     */
+    #[Route('/{tool}/{type}/{id}/view', name: 'chamilo_core_resource_view', methods: ['GET'])]
+    public function view(
+        Request $request,
+        TrackEDownloadsRepository $trackEDownloadsRepository,
+        ResourceFileHelper $resourceFileHelper,
+    ): Response {
+        $id = $request->get('id');
+        $resourceFileId = $request->get('resourceFileId');
+        $filter = (string) $request->get('filter');
+        $resourceNode = $this->getResourceNodeRepository()->findOneBy(['uuid' => $id]);
+
+        if (null === $resourceNode) {
+            throw new FileNotFoundException($this->trans('Resource not found'));
+        }
+
+        $resourceFile = null;
+        if ($resourceFileId) {
+            $resourceFile = $this->resourceFileRepository->find($resourceFileId);
+        }
+
+        $resourceFile ??= $resourceFileHelper->resolveResourceFileByAccessUrl($resourceNode);
+
+        if (!$resourceFile) {
+            throw new FileNotFoundException($this->trans('Resource file not found for the given resource node'));
+        }
+
+        $user = $this->userHelper->getCurrent();
+        $firstResourceLink = $resourceNode->getResourceLinks()->first();
+        if ($firstResourceLink && $user) {
+            $url = $resourceFile->getOriginalName();
+            $trackEDownloadsRepository->saveDownload($user, $firstResourceLink, $url);
+        }
+
+        $this->courseToolAccessTracker->trackFromResourceRequest($request);
+
+        $cid = (int) $request->query->get('cid');
+        $sid = (int) $request->query->get('sid');
+        $allUserInfo = null;
+        if ($cid && $user) {
+            $allUserInfo = $this->getAllInfoToCertificate(
+                $user->getId(),
+                $cid,
+                $sid,
+                false
+            );
+        }
+
+        return $this->processFile($request, $resourceNode, $resourceFile, 'show', $filter, $allUserInfo);
+    }
+
+    /**
+     * Redirect resource to link.
+     *
+     * @return RedirectResponse|void
+     */
+    #[Route('/{tool}/{type}/{id}/link', name: 'chamilo_core_resource_link', methods: ['GET'])]
+    public function link(
+        Request $request,
+        RouterInterface $router,
+        CLinkRepository $cLinkRepository,
+        EntityManagerInterface $entityManager
+    ): RedirectResponse {
+        $tool = (string) $request->get('tool');
+        $type = (string) $request->get('type');
+        $id = (int) $request->get('id');
+
+        $resourceNode = $this->getResourceNodeRepository()->find($id);
+
+        if (null === $resourceNode) {
+            throw new FileNotFoundException('Resource not found');
+        }
+
+        $this->courseToolAccessTracker->trackFromResourceRequest($request);
+
+        if ('course_tool' === $tool && 'links' === $type) {
+            $cLink = $cLinkRepository->findOneBy(['resourceNode' => $resourceNode]);
+
+            if ($cLink) {
+                return $this->redirect($cLink->getUrl());
+            }
+
+            throw new FileNotFoundException('CLink not found for the given resource node');
+        }
+
+        if ('external_tools' === $type) {
+            /** @var ExternalTool|null $externalTool */
+            $externalTool = $entityManager
+                ->getRepository(ExternalTool::class)
+                ->findOneBy(['resourceNode' => $resourceNode])
+            ;
+
+            if ($externalTool) {
+                $query = array_filter(
+                    array_merge(
+                        ['id' => $externalTool->getId()],
+                        $this->getCourseUrlQueryToArray()
+                    ),
+                    static fn ($value): bool => null !== $value && '' !== $value
+                );
+
+                $url = api_get_path(WEB_PLUGIN_PATH).'ImsLti/start.php?'.http_build_query($query);
+
+                return $this->redirect($url);
+            }
+
+            $this->abort('No redirect');
+        }
+
+        $repo = $this->getRepositoryFromRequest($request);
+
+        if ($repo instanceof ResourceWithLinkInterface) {
+            $resource = $repo->getResourceFromResourceNode($resourceNode->getId());
+            $url = $repo->getLink($resource, $router, $this->getCourseUrlQueryToArray());
+
+            return $this->redirect($url);
+        }
+
+        $this->abort('No redirect');
+    }
+
+    /**
+     * Download file of a resource node.
+     */
+    #[Route('/{tool}/{type}/{id}/download', name: 'chamilo_core_resource_download', methods: ['GET'])]
+    public function download(
+        Request $request,
+        TrackEDownloadsRepository $trackEDownloadsRepository,
+        ResourceFileHelper $resourceFileHelper,
+        ResourceNodeRepository $resourceNodeRepository,
+    ): Response {
+        $id = $request->get('id');
+        $resourceNode = $this->getResourceNodeRepository()->findOneBy(['uuid' => $id]);
+
+        if (null === $resourceNode) {
+            throw new FileNotFoundException($this->trans('Resource not found'));
+        }
+
+        $repo = $this->getRepositoryFromRequest($request);
+
+        $this->denyAccessUnlessGranted(
+            ResourceNodeVoter::VIEW,
+            $resourceNode,
+            $this->trans('Unauthorised access to resource')
+        );
+
+        $this->courseToolAccessTracker->trackFromResourceRequest($request);
+
+        $resourceFile = $resourceFileHelper->resolveResourceFileByAccessUrl($resourceNode);
+
+        // If resource node has a file just download it. Don't download the children.
+        if ($resourceFile) {
+            $user = $this->userHelper->getCurrent();
+            $firstResourceLink = $resourceNode->getResourceLinks()->first();
+
+            if ($firstResourceLink && $user) {
+                $url = $resourceFile->getOriginalName();
+                $trackEDownloadsRepository->saveDownload($user, $firstResourceLink, $url);
+            }
+
+            // Redirect to download single file.
+            return $this->processFile($request, $resourceNode, $resourceFile, 'download', '', null);
+        }
+
+        $zipName = $resourceNode->getSlug().'.zip';
+        $resourceNodeRepo = $repo->getResourceNodeRepository();
+        $type = $repo->getResourceType();
+
+        $criteria = Criteria::create()
+            ->where(Criteria::expr()->neq('resourceFiles', null)) // must have a file
+            ->andWhere(Criteria::expr()->eq('resourceType', $type)) // only download same type
+        ;
+
+        $qb = $resourceNodeRepo->getChildrenQueryBuilder($resourceNode);
+        $qbAlias = $qb->getRootAliases()[0];
+
+        $qb
+            ->leftJoin(\sprintf('%s.resourceFiles', $qbAlias), 'resourceFiles') // must have a file
+            ->addCriteria($criteria)
+        ;
+
+        /** @var ArrayCollection|ResourceNode[] $children */
+        $children = $qb->getQuery()->getResult();
+        $count = \count($children);
+        if (0 === $count) {
+            $params = $this->getResourceParams($request);
+            $params['id'] = $id;
+
+            $this->addFlash('warning', $this->trans('No files'));
+
+            return $this->redirectToRoute('chamilo_core_resource_list', $params);
+        }
+
+        $response = new StreamedResponse(
+            function () use ($zipName, $children, $resourceFileHelper, $resourceNodeRepository): void {
+                // Define suitable options for ZipStream Archive.
+                $options = new Archive();
+                $options->setContentType('application/octet-stream');
+                // initialise zipstream with output zip filename and options.
+                $zip = new ZipStream($zipName, $options);
+
+                /** @var ResourceNode $node */
+                foreach ($children as $node) {
+                    $resourceFile = $resourceFileHelper->resolveResourceFileByAccessUrl($node);
+
+                    if ($resourceFile) {
+                        $stream = $resourceNodeRepository->getResourceNodeFileStream($node, $resourceFile);
+                        $fileName = $resourceFile->getOriginalName();
+                        $zip->addFileFromStream($fileName, $stream);
+                    }
+                }
+                $zip->finish();
+            }
+        );
+
+        // Convert the file name to ASCII using iconv
+        $zipName = iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $zipName);
+
+        $disposition = $response->headers->makeDisposition(
+            ResponseHeaderBag::DISPOSITION_ATTACHMENT,
+            $zipName // Transliterator::transliterate($zipName)
+        );
+        $response->headers->set('Content-Disposition', $disposition);
+        $response->headers->set('Content-Type', 'application/octet-stream');
+
+        return $response;
+    }
+
+    #[Route('/{tool}/{type}/{id}/change_visibility', name: 'chamilo_core_resource_change_visibility', methods: ['POST'])]
+    public function changeVisibility(
+        Request $request,
+        EntityManagerInterface $entityManager,
+        SerializerInterface $serializer,
+        Security $security,
+    ): Response {
+        /** @var User $user */
+        $user = $security->getUser();
+        $isAdmin = ($user->isSuperAdmin() || $user->isAdmin());
+        $isCourseTeacher = ($user->hasRole('ROLE_CURRENT_COURSE_TEACHER') || $user->hasRole('ROLE_CURRENT_COURSE_SESSION_TEACHER'));
+
+        if (!($isCourseTeacher || $isAdmin)) {
+            throw new AccessDeniedHttpException();
+        }
+
+        $session = null;
+        if ($this->getSession()) {
+            $sessionId = $this->getSession()->getId();
+            $session = $entityManager->getRepository(Session::class)->find($sessionId);
+        }
+        $courseId = $this->getCourse()->getId();
+        $course = $entityManager->getRepository(Course::class)->find($courseId);
+        $id = $request->attributes->getInt('id');
+        $resourceNode = $this->getResourceNodeRepository()->findOneBy(['id' => $id]);
+
+        if (null === $resourceNode) {
+            throw new NotFoundHttpException($this->trans('Resource not found'));
+        }
+
+        $link = null;
+        foreach ($resourceNode->getResourceLinks() as $resourceLink) {
+            if ($resourceLink->getSession() === $session) {
+                $link = $resourceLink;
+
+                break;
+            }
+        }
+
+        if (null === $link) {
+            $link = new ResourceLink();
+            $link->setResourceNode($resourceNode)
+                ->setSession($session)
+                ->setCourse($course)
+                ->setVisibility(ResourceLink::VISIBILITY_DRAFT)
+            ;
+            $entityManager->persist($link);
+        } else {
+            if (ResourceLink::VISIBILITY_PUBLISHED === $link->getVisibility()) {
+                $link->setVisibility(ResourceLink::VISIBILITY_DRAFT);
+            } else {
+                $link->setVisibility(ResourceLink::VISIBILITY_PUBLISHED);
+            }
+        }
+
+        $entityManager->flush();
+
+        $json = $serializer->serialize(
+            $link,
+            'json',
+            [
+                'groups' => ['ctool:read'],
+            ]
+        );
+
+        return JsonResponse::fromJsonString($json);
+    }
+
+    #[Route(
+        '/{tool}/{type}/change_visibility/{visibility}',
+        name: 'chamilo_core_resource_change_visibility_all',
+        methods: ['POST']
+    )]
+    public function changeVisibilityAll(
+        Request $request,
+        CToolRepository $toolRepository,
+        CShortcutRepository $shortcutRepository,
+        ToolChain $toolChain,
+        EntityManagerInterface $entityManager,
+        Security $security
+    ): Response {
+        /** @var User $user */
+        $user = $security->getUser();
+        $isAdmin = ($user->isSuperAdmin() || $user->isAdmin());
+        $isCourseTeacher = ($user->hasRole('ROLE_CURRENT_COURSE_TEACHER') || $user->hasRole('ROLE_CURRENT_COURSE_SESSION_TEACHER'));
+
+        if (!($isCourseTeacher || $isAdmin)) {
+            throw new AccessDeniedHttpException();
+        }
+
+        $visibility = $request->attributes->get('visibility');
+
+        $session = null;
+        if ($this->getSession()) {
+            $sessionId = $this->getSession()->getId();
+            $session = $entityManager->getRepository(Session::class)->find($sessionId);
+        }
+        $courseId = $this->getCourse()->getId();
+        $course = $entityManager->getRepository(Course::class)->find($courseId);
+
+        $result = $toolRepository->getResourcesByCourse($course, $session)
+            ->addSelect('tool')
+            ->innerJoin('resource.tool', 'tool')
+            ->getQuery()
+            ->getResult()
+        ;
+
+        $skipTools = ['course_tool',
+            // 'chat',
+            // 'notebook',
+            // 'wiki'
+        ];
+
+        /** @var CTool $item */
+        foreach ($result as $item) {
+            if (\in_array($item->getTitle(), $skipTools, true)) {
+                continue;
+            }
+            $toolModel = $toolChain->getToolFromName($item->getTool()->getTitle());
+
+            if (!\in_array($toolModel->getCategory(), ['authoring', 'interaction'], true)) {
+                continue;
+            }
+
+            $resourceNode = $item->getResourceNode();
+
+            /** @var ResourceLink $link */
+            $link = null;
+            foreach ($resourceNode->getResourceLinks() as $resourceLink) {
+                if ($resourceLink->getSession() === $session) {
+                    $link = $resourceLink;
+
+                    break;
+                }
+            }
+
+            if (null === $link) {
+                $link = new ResourceLink();
+                $link->setResourceNode($resourceNode)
+                    ->setSession($session)
+                    ->setCourse($course)
+                    ->setVisibility(ResourceLink::VISIBILITY_DRAFT)
+                ;
+                $entityManager->persist($link);
+            }
+
+            if ('show' === $visibility) {
+                $link->setVisibility(ResourceLink::VISIBILITY_PUBLISHED);
+            } elseif ('hide' === $visibility) {
+                $link->setVisibility(ResourceLink::VISIBILITY_DRAFT);
+            }
+        }
+
+        $entityManager->flush();
+
+        return new Response(null, Response::HTTP_NO_CONTENT);
+    }
+
+    #[Route('/resource_files/{resourceNodeId}/variants', name: 'chamilo_core_resource_files_variants', methods: ['GET'])]
+    public function getVariants(string $resourceNodeId, EntityManagerInterface $em): JsonResponse
+    {
+        $variants = $em->getRepository(ResourceFile::class)->createQueryBuilder('rf')
+            ->join('rf.resourceNode', 'rn')
+            ->leftJoin('rn.creator', 'creator')
+            ->where('rf.resourceNode = :resourceNodeId')
+            ->andWhere('rf.accessUrl IS NOT NULL')
+            ->setParameter('resourceNodeId', $resourceNodeId)
+            ->getQuery()
+            ->getResult()
+        ;
+
+        $data = [];
+
+        /** @var ResourceFile $variant */
+        foreach ($variants as $variant) {
+            $data[] = [
+                'id' => $variant->getId(),
+                'title' => $variant->getOriginalName(),
+                'mimeType' => $variant->getMimeType(),
+                'size' => $variant->getSize(),
+                'updatedAt' => $variant->getUpdatedAt()->format('Y-m-d H:i:s'),
+                'url' => $variant->getAccessUrl() ? $variant->getAccessUrl()->getUrl() : null,
+                'path' => $this->resourceNodeRepository->getResourceFileUrl($variant->getResourceNode(), [], null, $variant),
+                'creator' => $variant->getResourceNode()->getCreator() ? $variant->getResourceNode()->getCreator()->getFullName() : 'Unknown',
+            ];
+        }
+
+        return $this->json($data);
+    }
+
+    #[Route('/resource_files/{id}/delete_variant', methods: ['DELETE'], name: 'chamilo_core_resource_files_delete_variant')]
+    public function deleteVariant(int $id, EntityManagerInterface $em): JsonResponse
+    {
+        $variant = $em->getRepository(ResourceFile::class)->find($id);
+        if (!$variant) {
+            return $this->json(['error' => 'Variant not found'], Response::HTTP_NOT_FOUND);
+        }
+
+        $em->remove($variant);
+        $em->flush();
+
+        return $this->json(['success' => true]);
+    }
+
+    private function processFile(Request $request, ResourceNode $resourceNode, ResourceFile $resourceFile, string $mode = 'show', string $filter = '', ?array $allUserInfo = null): mixed
+    {
+        $this->denyAccessUnlessGranted(
+            ResourceNodeVoter::VIEW,
+            $resourceNode,
+            $this->trans('Unauthorised view access to resource')
+        );
+
+        $fileName = $resourceFile->getOriginalName();
+        $fileSize = $resourceFile->getSize();
+        $mimeType = $resourceFile->getMimeType() ?: '';
+        [$start, $end, $length] = $this->getRange($request, $fileSize);
+        $resourceNodeRepo = $this->getResourceNodeRepository();
+
+        // Convert the file name to ASCII using iconv
+        $fileName = iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $fileName);
+
+        // MIME normalization for HTML
+        $looksLikeHtmlByExt = (bool) preg_match('/\.x?html?$/i', (string) $fileName);
+        if ('' === $mimeType || false === stripos($mimeType, 'html')) {
+            if ($looksLikeHtmlByExt) {
+                $mimeType = 'text/html; charset=UTF-8';
+            }
+        }
+
+        // Defense-in-depth: social post attachments must never render HTML inline (XSS mitigation).
+        // This covers files uploaded before the MIME-type allowlist was introduced.
+        $isSocialAttachment = 'social_post_attachments' === (string) $request->attributes->get('type');
+
+        // SVG: sanitize before serving in any mode (view or download).
+        // Glide is raster-only and cannot process SVG; sanitization strips embedded scripts regardless of how the file was stored.
+        if ('image/svg+xml' === $mimeType) {
+            $raw = $resourceNodeRepo->getResourceNodeFileContent($resourceNode, $resourceFile);
+            $content = (new SvgSanitizer())->sanitize((string) $raw);
+
+            if (false === $content || '' === $content) {
+                throw new BadRequestHttpException('Invalid SVG file');
+            }
+
+            $response = new Response($content);
+            $dispositionMode = 'download' === $mode
+                ? ResponseHeaderBag::DISPOSITION_ATTACHMENT
+                : ResponseHeaderBag::DISPOSITION_INLINE;
+            $disposition = $response->headers->makeDisposition($dispositionMode, $fileName);
+            $response->headers->set('Content-Disposition', $disposition);
+            $response->headers->set('Content-Type', 'image/svg+xml');
+            $response->headers->set('X-Content-Type-Options', 'nosniff');
+
+            return $response;
+        }
+
+        switch ($mode) {
+            case 'download':
+                $forceDownload = true;
+
+                break;
+
+            case 'show':
+            default:
+                $forceDownload = false;
+
+                // If it's an image then send it to Glide.
+                if (str_contains($mimeType, 'image')) {
+                    $glide = $this->getGlide();
+                    $server = $glide->getServer();
+                    $params = $request->query->all();
+
+                    // The filter overwrites the params from GET.
+                    if (!empty($filter)) {
+                        $params = $glide->getFilters()[$filter] ?? [];
+                    }
+
+                    // The image was cropped manually by the user, so we force to render this version,
+                    // no matter other crop parameters.
+                    $crop = $resourceFile->getCrop();
+                    if (!empty($crop)) {
+                        $params['crop'] = $crop;
+                    }
+
+                    $filePath = $resourceNodeRepo->getFilename($resourceFile);
+
+                    $response = $server->getImageResponse($filePath, $params);
+
+                    $disposition = $response->headers->makeDisposition(
+                        ResponseHeaderBag::DISPOSITION_INLINE,
+                        $fileName
+                    );
+                    $response->headers->set('Content-Disposition', $disposition);
+
+                    return $response;
+                }
+
+                // Modify the HTML content before displaying it.
+                if (str_contains($mimeType, 'html') && !$isSocialAttachment) {
+                    $content = $resourceNodeRepo->getResourceNodeFileContent($resourceNode, $resourceFile);
+
+                    if (null !== $allUserInfo) {
+                        $tagsToReplace = $allUserInfo[0];
+                        $replacementValues = $allUserInfo[1];
+                        $content = str_replace($tagsToReplace, $replacementValues, $content);
+                    }
+
+                    $content = $this->injectGlossaryJs($request, $content, $resourceNode);
+
+                    $response = new Response();
+                    $disposition = $response->headers->makeDisposition(
+                        ResponseHeaderBag::DISPOSITION_INLINE,
+                        $fileName
+                    );
+                    $response->headers->set('Content-Disposition', $disposition);
+                    $response->headers->set('Content-Type', 'text/html; charset=UTF-8');
+
+                    // Translate HTML: show only spans matching the user language.
+                    if ('true' === $this->getSettingsManager()->getSetting('editor.translate_html')) {
+                        $user = $this->userHelper->getCurrent();
+
+                        if (null !== $user) {
+                            $locale = (string) $user->getLocale();
+                            $localeJson = json_encode(
+                                $locale,
+                                JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT
+                            );
+
+                            $js = <<<HTML
+                    <script>
+                    (function () {
+                        var userLocale = {$localeJson};
+
+                        function normalizeLocale(locale) {
+                            return String(locale || "").replace("-", "_");
+                        }
+
+                        function buildLocaleCandidates(locale) {
+                            var normalizedLocale = normalizeLocale(locale);
+                            var isoCode = normalizedLocale.split("_")[0];
+                            var candidates = [];
+
+                            function addCandidate(value) {
+                                if (value && candidates.indexOf(value) === -1) {
+                                    candidates.push(value);
+                                }
+                            }
+
+                            addCandidate(isoCode);
+                            addCandidate(normalizedLocale);
+                            addCandidate(normalizedLocale.replace("_", "-"));
+
+                            return candidates;
+                        }
+
+                        function findByLang(selector, candidates) {
+                            for (var i = 0; i < candidates.length; i++) {
+                                var matches = document.querySelectorAll(
+                                    selector.replace("{lang}", candidates[i])
+                                );
+
+                                if (matches.length > 0) {
+                                    return matches;
+                                }
+                            }
+
+                            return [];
+                        }
+
+                        function hideMatches(matches) {
+                            for (var i = 0; i < matches.length; i++) {
+                                matches[i].style.display = "none";
+                            }
+                        }
+
+                        function showMatches(matches) {
+                            for (var i = 0; i < matches.length; i++) {
+                                matches[i].classList.remove("hidden");
+                                matches[i].style.display = "";
+                            }
+                        }
+
+                        function applyTranslateHtml() {
+                            var localeCandidates = buildLocaleCandidates(userLocale);
+                            var translateElements = document.querySelectorAll(".mce-translatehtml");
+
+                            if (translateElements.length > 0) {
+                                hideMatches(translateElements);
+                                showMatches(
+                                    findByLang('[lang="{lang}"].mce-translatehtml', localeCandidates)
+                                );
+                            }
+
+                            var legacyElements = document.querySelectorAll(
+                                'span[lang]:not(.mce-translatehtml)'
+                            );
+
+                            if (legacyElements.length > 0) {
+                                hideMatches(legacyElements);
+                                showMatches(
+                                    findByLang(
+                                        'span[lang="{lang}"]:not(.mce-translatehtml)',
+                                        localeCandidates
+                                    )
+                                );
+                            }
+                        }
+
+                        if (document.readyState === "loading") {
+                            document.addEventListener("DOMContentLoaded", applyTranslateHtml);
+                        } else {
+                            applyTranslateHtml();
+                        }
+                    })();
+                    </script>
+                    HTML;
+
+                            if (false !== stripos($content, '</head>')) {
+                                $content = str_ireplace('</head>', $js.'</head>', $content);
+                            } elseif (false !== stripos($content, '</body>')) {
+                                $content = str_ireplace('</body>', $js.'</body>', $content);
+                            } else {
+                                $content .= $js;
+                            }
+                        }
+                    }
+                    $response->setContent($content);
+
+                    return $response;
+                }
+
+                break;
+        }
+
+        $response = new StreamedResponse(
+            function () use ($resourceNodeRepo, $resourceFile, $start, $length): void {
+                $stream = $resourceNodeRepo->getResourceNodeFileStream(
+                    $resourceFile->getResourceNode(),
+                    $resourceFile
+                );
+
+                $this->echoBuffer($stream, $start, $length);
+            }
+        );
+
+        $disposition = $response->headers->makeDisposition(
+            $forceDownload ? ResponseHeaderBag::DISPOSITION_ATTACHMENT : ResponseHeaderBag::DISPOSITION_INLINE,
+            $fileName
+        );
+
+        $response->headers->set('Content-Disposition', $disposition);
+        $response->headers->set('Content-Type', $mimeType ?: 'application/octet-stream');
+        $response->headers->set('Content-Length', (string) $length);
+        $response->headers->set('Accept-Ranges', 'bytes');
+        $response->headers->set('Content-Range', "bytes $start-$end/$fileSize");
+        $response->setStatusCode(
+            $start > 0 || $end < $fileSize - 1 ? Response::HTTP_PARTIAL_CONTENT : Response::HTTP_OK
+        );
+
+        return $response;
+    }
+
+    private function injectGlossaryJs(
+        Request $request,
+        string $content,
+        ?ResourceNode $resourceNode = null
+    ): string {
+        // First normalize broken HTML coming from templates/editors
+        $content = $this->normalizeGeneratedHtml($content);
+
+        $tool = (string) $request->attributes->get('tool');
+        if ('document' !== $tool) {
+            return $content;
+        }
+
+        // Global kill switch (applies to all tools/contexts)
+        $settingsManager = $this->getSettingsManager();
+        $modeRaw = (string) $settingsManager->getSetting('glossary.show_glossary_in_extra_tools', true);
+        $mode = strtolower(trim($modeRaw));
+
+        if (\in_array($mode, ['', 'none', 'false', '0'], true)) {
+            return $content;
+        }
+
+        // Detect when this document is being displayed from a Learning Path context
+        $origin = strtolower(trim((string) $request->query->get('origin', '')));
+        $isLpContext =
+            $request->query->has('lp_id')
+            || $request->query->has('learnpath_id')
+            || $request->query->has('learnpath_item_id')
+            || ('learnpath' === $origin);
+
+        // Only inject for LP when the mode allows it
+        if ($isLpContext) {
+            if (!\in_array($mode, ['true', 'lp', 'exercise_and_lp'], true)) {
+                return $content;
+            }
+        } else {
+            // Do not inject in the standalone Documents tool (prevents unwanted highlights outside LP/exercises)
+            return $content;
+        }
+
+        $course = $this->getCourse();
+        $session = $this->getSession();
+
+        $resourceNodeParentId = null;
+        if ($resourceNode && $resourceNode->getParent()) {
+            $resourceNodeParentId = $resourceNode->getParent()->getId();
+        }
+
+        $jsConfig = $this->renderView(
+            '@ChamiloCore/Glossary/glossary_auto.html.twig',
+            [
+                'course' => $course,
+                'session' => $session,
+                'resourceNodeParentId' => $resourceNodeParentId,
+            ]
+        );
+
+        if (false !== stripos($content, '</body>')) {
+            return str_ireplace('</body>', $jsConfig.'</body>', $content);
+        }
+
+        return $content.$jsConfig;
+    }
+
+    /**
+     * Normalize generated HTML documents coming from templates/editors.
+     *
+     * This method tries to fix the pattern:
+     * <head>...</head><!DOCTYPE html><html>...<head>...</head><body>...</body></html>
+     *
+     * It will:
+     * - Extract the first <head>...</head> block (if it appears before <!DOCTYPE).
+     * - Keep the proper <!DOCTYPE html><html>... document.
+     * - Inject the inner content of the first head into the main <head> of the document.
+     */
+    private function normalizeGeneratedHtml(string $content): string
+    {
+        $upper = strtoupper($content);
+
+        $firstHeadStart = stripos($upper, '<HEAD');
+        $firstHeadEnd = stripos($upper, '</HEAD>');
+        $doctypePos = stripos($upper, '<!DOCTYPE');
+        $htmlPos = stripos($upper, '<HTML');
+
+        // If we do not have the pattern <head>...</head> before <!DOCTYPE html>, do nothing.
+        if (false === $firstHeadStart || false === $firstHeadEnd || false === $doctypePos) {
+            return $content;
+        }
+
+        if (!($firstHeadStart <= $firstHeadEnd && $firstHeadEnd < $doctypePos)) {
+            // The first <head> is not clearly before the <!DOCTYPE>, keep content as-is.
+            return $content;
+        }
+
+        // Extract the first <head>...</head> block (including tags).
+        $headBlockLength = $firstHeadEnd + \strlen('</head>') - $firstHeadStart;
+        $headBlock = substr($content, $firstHeadStart, $headBlockLength);
+
+        // Remove that first <head> block from the beginning part.
+        // Everything from <!DOCTYPE ...> will be treated as the "real" document.
+        $baseDoc = substr($content, $doctypePos);
+
+        // Extract only the inner content of the first head (we do not want nested <head> tags).
+        $innerHead = preg_replace('~^.*?<head[^>]*>|</head>.*$~is', '', $headBlock);
+        if (null === $innerHead) {
+            // preg_replace error or something weird, bail out and keep original content.
+            return $content;
+        }
+        $innerHead = trim($innerHead);
+
+        // If there is nothing interesting inside the first head, just return the base document.
+        if ('' === $innerHead) {
+            return $baseDoc;
+        }
+
+        // Now inject innerHead into the main <head> of the base document.
+        $upperBase = strtoupper($baseDoc);
+        $secondHeadStart = stripos($upperBase, '<HEAD');
+        if (false === $secondHeadStart) {
+            // No <head> in the base document, return base doc unchanged.
+            return $baseDoc;
+        }
+
+        $secondHeadTagEnd = strpos($baseDoc, '>', $secondHeadStart);
+        if (false === $secondHeadTagEnd) {
+            // Malformed head tag, do not touch.
+            return $baseDoc;
+        }
+
+        $insertionPos = $secondHeadTagEnd + 1;
+
+        return substr($baseDoc, 0, $insertionPos)
+            .PHP_EOL.$innerHead.PHP_EOL
+            .substr($baseDoc, $insertionPos);
+    }
+}

@@ -1,0 +1,237 @@
+/* CardGame C2 widget */
+.cardgame-launcher {
+    position: fixed;
+    right: 24px;
+    bottom: 110px;
+    width: 56px;
+    height: 56px;
+    border: 0;
+    border-radius: 999px;
+    background: #1d4ed8 url('card-acces.svg') center center / 28px 28px no-repeat;
+    box-shadow: 0 12px 30px rgba(15, 23, 42, 0.22);
+    cursor: pointer;
+    z-index: 1080;
+    transition: transform 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease;
+}
+
+.cardgame-launcher:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 16px 38px rgba(15, 23, 42, 0.28);
+}
+
+.cardgame-launcher--active {
+    background-image: url('card-acces-active.svg');
+    background-color: #7c3aed;
+}
+
+.cardgame-launcher__badge {
+    position: absolute;
+    top: 6px;
+    right: 8px;
+    color: #facc15;
+    font-size: 18px;
+    line-height: 1;
+}
+
+.cardgame-overlay {
+    position: fixed;
+    inset: 0;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    background: rgba(15, 23, 42, 0.55);
+    z-index: 1090;
+}
+
+.cardgame-overlay.is-visible {
+    display: flex;
+}
+
+.cardgame-modal {
+    width: min(960px, 100%);
+    max-height: calc(100vh - 48px);
+    overflow: auto;
+    border-radius: 20px;
+    background: #ffffff;
+    box-shadow: 0 24px 60px rgba(15, 23, 42, 0.35);
+}
+
+.cardgame-modal__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 20px 24px;
+    border-bottom: 1px solid #e2e8f0;
+}
+
+.cardgame-modal__title {
+    margin: 0;
+    font-size: 22px;
+    font-weight: 700;
+    color: #0f172a;
+}
+
+.cardgame-modal__close {
+    border: 0;
+    background: transparent;
+    color: #475569;
+    font-size: 28px;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.cardgame-modal__body {
+    display: grid;
+    gap: 20px;
+    padding: 24px;
+}
+
+.cardgame-current {
+    display: grid;
+    gap: 12px;
+}
+
+.cardgame-current__header {
+    font-size: 16px;
+    font-weight: 600;
+    color: #334155;
+}
+
+.cardgame-current__board {
+    position: relative;
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    width: 100%;
+    min-height: 420px;
+    overflow: hidden;
+    border-radius: 18px;
+    background-color: #e2e8f0;
+    background-repeat: no-repeat;
+    background-position: center center;
+    background-size: cover;
+    box-shadow: inset 0 0 0 1px rgba(148, 163, 184, 0.35);
+}
+
+.cardgame-piece-mask {
+    min-height: 140px;
+    border-right: 1px dashed rgba(15, 23, 42, 0.2);
+    border-bottom: 1px dashed rgba(15, 23, 42, 0.2);
+    background: url('b-back.jpg') center center / cover no-repeat;
+    transition: opacity 0.25s ease;
+}
+
+.cardgame-piece-mask--revealed {
+    opacity: 0;
+}
+
+.cardgame-archive {
+    display: grid;
+    gap: 10px;
+}
+
+.cardgame-archive__title {
+    font-size: 15px;
+    font-weight: 600;
+    color: #334155;
+}
+
+.cardgame-archive__grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 12px;
+}
+
+.cardgame-archive__item {
+    min-height: 100px;
+    border-radius: 14px;
+    background: #e2e8f0 url('b-back.jpg') center center / cover no-repeat;
+    box-shadow: inset 0 0 0 1px rgba(148, 163, 184, 0.28);
+}
+
+.cardgame-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px;
+}
+
+.cardgame-status {
+    flex: 1 1 280px;
+    min-height: 48px;
+    padding: 12px 14px;
+    border-radius: 12px;
+    font-size: 14px;
+    line-height: 1.4;
+    background: #eff6ff;
+    color: #1e3a8a;
+}
+
+.cardgame-status--muted {
+    background: #f8fafc;
+    color: #475569;
+}
+
+.cardgame-status--success {
+    background: #ecfdf5;
+    color: #166534;
+}
+
+.cardgame-status--warning {
+    background: #fff7ed;
+    color: #9a3412;
+}
+
+.cardgame-status--error {
+    background: #fef2f2;
+    color: #b91c1c;
+}
+
+.cardgame-button {
+    min-width: 170px;
+}
+
+.pimg01 {
+    background-image: url('img01.jpg');
+}
+
+.pimg02 {
+    background-image: url('img02.jpg');
+}
+
+.pimg03 {
+    background-image: url('img03.jpg');
+}
+
+.pimg04 {
+    background-image: url('img04.jpg');
+}
+
+@media (max-width: 768px) {
+    .cardgame-launcher {
+        right: 16px;
+        bottom: 96px;
+    }
+
+    .cardgame-overlay {
+        padding: 12px;
+    }
+
+    .cardgame-modal__header,
+    .cardgame-modal__body {
+        padding: 16px;
+    }
+
+    .cardgame-current__board {
+        min-height: 300px;
+    }
+
+    .cardgame-piece-mask {
+        min-height: 100px;
+    }
+
+    .cardgame-archive__grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}

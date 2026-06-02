@@ -1,0 +1,271 @@
+<?php
+/* For licensing terms, see /license.txt */
+
+/**
+ * Class Gradebook.
+ * This class provides methods for the notebook management.
+ * Include/require it in your code to use its features.
+ */
+class Gradebook extends Model
+{
+    public string $table_skill = '';
+    public string $table_skill_rel_gradebook = '';
+
+    public $columns = [
+        'id',
+        'name',
+        'description',
+        'course_code',
+        'parent_id',
+        'grade_model_id',
+        'session_id',
+        'weight',
+        'user_id',
+    ];
+
+    /**
+     * Constructor.
+     */
+    public function __construct()
+    {
+        parent::__construct();
+        $this->table = Database::get_main_table(TABLE_MAIN_GRADEBOOK_CATEGORY);
+        $this->table_skill = Database::get_main_table(TABLE_MAIN_SKILL);
+        $this->table_skill_rel_gradebook = Database::get_main_table(TABLE_MAIN_SKILL_REL_GRADEBOOK);
+    }
+
+    /**
+     * Returns true if the gradebook is active and visible in a course, false
+     * otherwise.
+     *
+     * @param int $c_id Course integer id, defaults to the current course
+     *
+     * @return bool
+     */
+    public static function is_active($c_id = null)
+    {
+        $name = 'gradebook';
+        $table = Database::get_main_table(TABLE_MAIN_SETTINGS);
+        $sql = "SELECT * FROM $table
+            WHERE variable='course_hide_tools' AND subkey='$name'
+            LIMIT 1";
+        $result = Database::query($sql);
+        $setting = Database::store_result($result);
+        $setting = $setting[0] ?? [];
+        $inactive = isset($setting['selected_value']) && 'true' === $setting['selected_value'];
+
+        if ($inactive) {
+            return false;
+        }
+
+        $c_id = $c_id ? (int) $c_id : api_get_course_int_id();
+        $toolTable = Database::get_course_table(TABLE_TOOL_LIST);
+        $sql = "SELECT resource_node_id, session_id
+            FROM $toolTable
+            WHERE c_id = $c_id AND title = '$name'
+            LIMIT 1";
+        $result = Database::query($sql);
+        $item = Database::store_result($result, 'ASSOC');
+        $item = $item[0] ?? null;
+        if (empty($item)) {
+            return true;
+        }
+
+        $nodeId = (int) ($item['resource_node_id'] ?? 0);
+        if ($nodeId <= 0) {
+            return true;
+        }
+
+        // Visibility is now stored in resource_link.visibility
+        $rlTable = Database::get_main_table('resource_link');
+        $sessionId = $item['session_id'] ?? null;
+
+        $sessionCondition = empty($sessionId)
+            ? "session_id IS NULL"
+            : "session_id = ".((int) $sessionId);
+
+        $sql = "SELECT visibility
+            FROM $rlTable
+            WHERE resource_node_id = $nodeId
+              AND c_id = $c_id
+              AND $sessionCondition
+              AND user_id IS NULL
+              AND usergroup_id IS NULL
+              AND group_id IS NULL
+              AND deleted_at IS NULL
+            ORDER BY id DESC
+            LIMIT 1";
+        $result = Database::query($sql);
+        $link = Database::store_result($result, 'ASSOC');
+        $link = $link[0] ?? null;
+
+        if (empty($link) || !isset($link['visibility'])) {
+            return true;
+        }
+
+        return (int) $link['visibility'] === 2;
+    }
+
+    public function get_all(array $options = []): array
+    {
+        $gradebooks = parent::get_all($options);
+        foreach ($gradebooks as &$gradebook) {
+            if (empty($gradebook['name'])) {
+                $gradebook['name'] = $gradebook['course_code'];
+            }
+        }
+
+        return $gradebooks;
+    }
+
+    /**
+     * @param int   $gradebook_id
+     * @param array $skill_list
+     * @param bool  $deleteSkillNotInList
+     *
+     * @return bool
+     */
+    public function updateSkillsToGradeBook(
+        $gradebook_id,
+        $skill_list,
+        $deleteSkillNotInList = true
+    ) {
+        $skill_gradebook = new SkillRelGradebookModel();
+        $skill_gradebooks_source = $skill_gradebook->get_all(
+            ['where' => ['gradebook_id = ?' => $gradebook_id]]
+        );
+        $clean_gradebook = [];
+
+        if (!empty($skill_gradebooks_source)) {
+            foreach ($skill_gradebooks_source as $source) {
+                $clean_gradebook[] = $source['skill_id'];
+            }
+        }
+
+        //Cleaning skills
+        if (!empty($skill_list)) {
+            $skill_list = array_map('intval', $skill_list);
+            $skill_list = array_filter($skill_list);
+        }
+
+        if (!empty($skill_list)) {
+            if (!empty($clean_gradebook)) {
+                $skill_to_remove = array_diff($clean_gradebook, $skill_list);
+            }
+
+            foreach ($skill_list as $skill_id) {
+                $params = [];
+                $params['gradebook_id'] = $gradebook_id;
+                $params['skill_id'] = $skill_id;
+                $params['type'] = "";
+                if (!$skill_gradebook->existsGradeBookSkill($gradebook_id, $skill_id)) {
+                    $skill_gradebook->save($params);
+                }
+            }
+        } else {
+            $skill_to_remove = $clean_gradebook;
+        }
+
+        if ($deleteSkillNotInList) {
+            if (!empty($skill_to_remove)) {
+                foreach ($skill_to_remove as $remove) {
+                    $skill_item = $skill_gradebook->getSkillInfo(
+                        $remove,
+                        $gradebook_id
+                    );
+                    $skill_gradebook->delete($skill_item['id']);
+                }
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Returns a Form validator Obj.
+     *
+     * @todo the form should be auto generated
+     *
+     * @param   string  url
+     * @param   string  action add, edit
+     *
+     * @return FormValidator
+     */
+    public function show_skill_form($gradebook_id, $url, $header = null)
+    {
+        $form = new FormValidator('gradebook_add_skill', 'POST', $url);
+        // Setting the form elements
+        if (!isset($header)) {
+            $header = get_lang('Add');
+        }
+        $id = isset($_GET['id']) ? intval($_GET['id']) : '';
+
+        $form->addHeader($header);
+        $form->addElement('hidden', 'id', $id);
+
+        $skill = new SkillModel();
+        $skills = $skill->get_all();
+        $clean_skill_list = [];
+        foreach ($skills as $skill) {
+            $clean_skill_list[$skill['id']] = $skill['title'];
+        }
+        $form->addSelect(
+            'skill',
+            get_lang('Skills'),
+            $clean_skill_list,
+            [
+                'multiple' => 'multiple',
+            ]
+        );
+
+        $selected_skills = $this->getSkillsByGradebook($gradebook_id);
+        $clean_selected_skills = [];
+        if (!empty($selected_skills)) {
+            foreach ($selected_skills as $skill) {
+                $clean_selected_skills[] = $skill['id'];
+            }
+        }
+
+        $form->addButtonCreate(get_lang('Add'), 'submit');
+        $form->setDefaults(['skill' => $clean_selected_skills]);
+
+        return $form;
+    }
+
+    /**
+     * @param int $id
+     *
+     * @return array|resource
+     */
+    public function getSkillsByGradebook($id)
+    {
+        $id = (int) $id;
+        $sql = "SELECT skill.id, skill.title as name
+                FROM {$this->table_skill} skill
+                INNER JOIN {$this->table_skill_rel_gradebook} skill_rel_gradebook
+                ON skill.id = skill_rel_gradebook.skill_id
+                WHERE skill_rel_gradebook.gradebook_id = $id";
+        $result = Database::query($sql);
+        $result = Database::store_result($result, 'ASSOC');
+
+        return $result;
+    }
+
+    /**
+     * Displays the title + grid.
+     */
+    public function display()
+    {
+        // action links
+        echo $this->returnGrid();
+    }
+
+    /**
+     * Displays the title + grid.
+     */
+    public function returnGrid()
+    {
+        // action links
+        return Display::grid_html('gradebooks');
+    }
+}

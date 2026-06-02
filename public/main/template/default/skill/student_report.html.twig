@@ -1,0 +1,45 @@
+{% autoescape false %}
+    <div class="section-header section-header--h2">
+        <h2>{{ 'My skills'|trans }}</h2>
+    </div>
+    <p>
+        {{ "The skills you have acquired, formally or non-formally, social or technical."|trans }}
+    </p>
+    {% if rows %}
+        <div class="communications">
+            {% if skill_table %}
+                {{ skill_table }}
+            {% endif %}
+        </div>
+        <div class="section-header section-header--h3">
+            <h3>{{ 'Skills History'|trans }}</h3>
+        </div>
+        <table class="table">
+            <thead>
+            <tr>
+                <th>{{ 'Badge'|trans }}</th>
+                <th>{{ 'Skill'|trans }}</th>
+                <th>{{ 'Date'|trans }}</th>
+                <th>{{ 'Course'|trans }}</th>
+            </tr>
+            </thead>
+            <tbody>
+            {% for row in rows %}
+                <tr>
+                    <td>{{ row.skill_badge }}</td>
+                    <td>{{ row.skill_title }}</td>
+                    <td>{{ row.achieved_at }}</td>
+                    {% if row.course_name %}
+                        <td>
+                            <img src="{{ row.course_image }}" alt="{{ row.course_name }}" width="32">
+                            {{ row.course_name }}
+                        </td>
+                    {% else %}
+                        <td> -</td>
+                    {% endif %}
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    {% endif %}
+{% endautoescape %}

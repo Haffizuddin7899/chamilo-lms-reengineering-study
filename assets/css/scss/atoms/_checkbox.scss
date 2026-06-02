@@ -1,0 +1,96 @@
+.p-checkbox {
+  @apply relative inline-flex select-none align-bottom w-4 h-4;
+
+  &-input {
+    @apply cursor-pointer appearance-none absolute start-0 w-full h-full p-0 m-0 opacity-0 z-[1] outline-none outline-0 border border-transparent rounded-full;
+  }
+
+  &-box {
+    @apply flex justify-center items-center rounded border border-gray-50 w-4 h-4 transition outline-transparent;
+
+    .p-checkbox-checked & {
+      @apply border-gray-50 bg-white;
+    }
+
+    .p-checkbox-checked:not(.p-disabled):has(.p-checkbox-input:hover) & {
+      @apply border-primary bg-white;
+    }
+
+    .p-checkbox:not(.p-disabled):has(.p-checkbox-input:focus-visible) & {
+      @apply border-primary shadow-xl outline-none outline-0
+    }
+
+    .p-checkbox-checked:not(.p-disabled):has(.p-checkbox-input:focus-visible) & {
+      @apply border-primary;
+    }
+
+    .p-checkbox.p-variant-filled & { }
+
+    .p-checkbox-checked.p-variant-filled & {}
+
+    .p-checkbox-checked.p-variant-filled:not(.p-disabled):has(.p-checkbox-input:hover) & { }
+  }
+
+  &-icon {
+    @apply duration-200 text-gray-90 text-body-2 w-3 h-3;
+
+    .p-checkbox-checked & {
+      @apply text-gray-90;
+    }
+
+    .p-checkbox-checked:not(.p-disabled):has(.p-checkbox-input:hover) & {
+      @apply text-primary;
+    }
+  }
+
+  &:not(.p-disabled) {
+    &:has(.p-checkbox-input:hover) {
+      .p-checkbox-box {
+        @apply border-primary;
+      }
+    }
+  }
+
+  &.p-invalid > & {
+    @apply border-danger;
+  }
+
+  &.p-disabled {
+    @apply opacity-100;
+
+    & .p-checkbox-box {
+      @apply border-gray-50 bg-gray-20;
+
+      .p-checkbox-icon {
+        @apply text-gray-50;
+      }
+    }
+  }
+
+  &-sm,
+  &-sm &-box {
+    @apply w-2 h-2;
+  }
+
+  &-sm &-icon {
+    @apply text-body-2 w-2 h-2;
+  }
+
+  &-lg,
+  &-lg &-box {
+    @apply w-6 h-6;
+  }
+
+  &-lg &-icon {
+    @apply text-body-2 w-5 h-5;
+  }
+}
+
+/* legacy checkboxes */
+.p-checkbox-box .p-checkbox-icon {
+  @apply hidden;
+}
+
+.p-checkbox-input:checked + .p-checkbox-box .p-checkbox-icon {
+  @apply block;
+}

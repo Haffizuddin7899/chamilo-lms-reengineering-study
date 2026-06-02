@@ -1,0 +1,13 @@
+ignore:
+  - "src/Kernel.php"
+  - "src/CoreBundle/DependencyInjection"
+  - "src/CoreBundle/Component/Editor"
+  - "src/CoreBundle/Component/HTMLPurifier"
+  - "src/CoreBundle/Helpers/ChamiloHelper.php"
+  - "src/CoreBundle/Component/Composer/ScriptHandler.php"
+  - "src/CoreBundle/Framework/Container.php"
+  - "src/CoreBundle/ChamiloCoreBundle.php"
+  - "src/CourseBundle/ChamiloCourseBundle.php"
+  - "src/CourseBundle/DependencyInjection"
+  - "src/CourseBundle/Component"
+  - "src/LtiBundle"

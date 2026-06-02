@@ -1,0 +1,644 @@
+<?php
+
+declare(strict_types=1);
+
+/* For licensing terms, see /license.txt */
+
+namespace Chamilo\CoreBundle\Entity;
+
+use ApiPlatform\Doctrine\Orm\Filter\SearchFilter;
+use ApiPlatform\Metadata\ApiFilter;
+use ApiPlatform\Metadata\ApiResource;
+use ApiPlatform\Metadata\Delete;
+use ApiPlatform\Metadata\Get;
+use ApiPlatform\Metadata\GetCollection;
+use ApiPlatform\Metadata\Post;
+use ApiPlatform\Metadata\Put;
+use Chamilo\CoreBundle\Repository\BranchSyncRepository;
+use DateTime;
+use Doctrine\Common\Collections\ArrayCollection;
+use Doctrine\Common\Collections\Collection;
+use Doctrine\ORM\Mapping as ORM;
+use Gedmo\Mapping\Annotation as Gedmo;
+use Symfony\Component\Serializer\Attribute\Groups;
+use Symfony\Component\Validator\Constraints as Assert;
+
+/**
+ * BranchSync.
+ */
+#[ApiResource(
+    shortName: 'Branch',
+    operations: [
+        new GetCollection(
+            normalizationContext: ['groups' => ['branch:list']],
+        ),
+        new Get(
+            security: "is_granted('IS_AUTHENTICATED_FULLY')",
+            normalizationContext: ['groups' => ['branch:read']],
+        ),
+        new Post(
+            security: "is_granted('ROLE_ADMIN')",
+            denormalizationContext: ['groups' => ['branch:write']],
+        ),
+        new Put(
+            security: "is_granted('ROLE_ADMIN')",
+            denormalizationContext: ['groups' => ['branch:write']],
+        ),
+        new Delete(
+            security: "is_granted('ROLE_ADMIN')",
+        ),
+    ],
+)]
+#[ApiFilter(SearchFilter::class, properties: ['title' => 'partial'])]
+#[ORM\Table(name: 'branch_sync')]
+#[ORM\Entity(repositoryClass: BranchSyncRepository::class)]
+#[Gedmo\Tree(type: 'nested')]
+class BranchSync
+{
+    #[Groups(['branch:list', 'branch:read', 'room:list', 'room:read'])]
+    #[ORM\Column(name: 'id', type: 'integer')]
+    #[ORM\Id]
+    #[ORM\GeneratedValue]
+    protected ?int $id = null;
+
+    #[ORM\ManyToOne(targetEntity: AccessUrl::class, cascade: ['persist'])]
+    #[ORM\JoinColumn(name: 'access_url_id', referencedColumnName: 'id')]
+    protected AccessUrl $url;
+
+    #[Groups(['branch:read'])]
+    #[ORM\Column(name: 'unique_id', type: 'string', length: 50, nullable: false, unique: true)]
+    protected string $uniqueId;
+
+    #[Groups(['branch:list', 'branch:read', 'branch:write', 'room:list', 'room:read'])]
+    #[Assert\NotBlank]
+    #[Assert\Length(max: 250)]
+    #[ORM\Column(name: 'title', type: 'string', length: 250)]
+    protected string $title;
+
+    #[Groups(['branch:read', 'branch:write'])]
+    #[Assert\Length(max: 2000)]
+    #[ORM\Column(name: 'description', type: 'text', nullable: true)]
+    protected ?string $description = null;
+
+    #[Groups(['branch:read', 'branch:write'])]
+    #[Assert\Length(max: 40)]
+    #[ORM\Column(name: 'branch_ip', type: 'string', length: 40, nullable: true, unique: false)]
+    protected ?string $branchIp = null;
+
+    #[Groups(['branch:read', 'branch:write'])]
+    #[Assert\Range(min: -90, max: 90)]
+    #[ORM\Column(name: 'latitude', type: 'decimal', nullable: true, unique: false)]
+    protected ?string $latitude = null;
+
+    #[Groups(['branch:read', 'branch:write'])]
+    #[Assert\Range(min: -180, max: 180)]
+    #[ORM\Column(name: 'longitude', type: 'decimal', nullable: true, unique: false)]
+    protected ?string $longitude = null;
+
+    #[Groups(['branch:read', 'branch:write'])]
+    #[ORM\Column(name: 'dwn_speed', type: 'integer', nullable: true, unique: false)]
+    protected ?int $dwnSpeed = null;
+
+    #[Groups(['branch:read', 'branch:write'])]
+    #[ORM\Column(name: 'up_speed', type: 'integer', nullable: true, unique: false)]
+    protected ?int $upSpeed = null;
+
+    #[Groups(['branch:read', 'branch:write'])]
+    #[ORM\Column(name: 'delay', type: 'integer', nullable: true, unique: false)]
+    protected ?int $delay = null;
+
+    #[Groups(['branch:read', 'branch:write'])]
+    #[Assert\Email]
+    #[Assert\Length(max: 250)]
+    #[ORM\Column(name: 'admin_mail', type: 'string', length: 250, nullable: true, unique: false)]
+    protected ?string $adminMail = null;
+
+    #[Groups(['branch:read', 'branch:write'])]
+    #[Assert\Length(max: 250)]
+    #[ORM\Column(name: 'admin_name', type: 'string', length: 250, nullable: true, unique: false)]
+    protected ?string $adminName = null;
+
+    #[Groups(['branch:read', 'branch:write'])]
+    #[Assert\Length(max: 40)]
+    #[Assert\Regex(pattern: '/^[\d\s\+\-\(\)\.]*$/', message: 'Only digits, spaces, +, -, (, ), and . are allowed.')]
+    #[ORM\Column(name: 'admin_phone', type: 'string', length: 250, nullable: true, unique: false)]
+    protected ?string $adminPhone = null;
+
+    #[Groups(['branch:read'])]
+    #[ORM\Column(name: 'last_sync_trans_id', type: 'integer', nullable: true, unique: false)]
+    protected ?int $lastSyncTransId = null;
+
+    #[Groups(['branch:read'])]
+    #[ORM\Column(name: 'last_sync_trans_date', type: 'datetime', nullable: true, unique: false)]
+    protected ?DateTime $lastSyncTransDate = null;
+
+    #[Groups(['branch:read'])]
+    #[ORM\Column(name: 'last_sync_type', type: 'string', length: 20, nullable: true, unique: false)]
+    protected ?string $lastSyncType = null;
+
+    #[Groups(['branch:read'])]
+    #[ORM\Column(name: 'ssl_pub_key', type: 'string', length: 250, nullable: true, unique: false)]
+    protected ?string $sslPubKey;
+
+    #[Groups(['branch:read'])]
+    #[ORM\Column(name: 'branch_type', type: 'string', length: 250, nullable: true, unique: false)]
+    protected ?string $branchType = null;
+
+    #[Gedmo\TreeLeft]
+    #[ORM\Column(name: 'lft', type: 'integer', nullable: true, unique: false)]
+    protected ?int $lft = null;
+
+    #[Gedmo\TreeRight]
+    #[ORM\Column(name: 'rgt', type: 'integer', nullable: true, unique: false)]
+    protected ?int $rgt = null;
+
+    #[Gedmo\TreeLevel]
+    #[ORM\Column(name: 'lvl', type: 'integer', nullable: true, unique: false)]
+    protected ?int $lvl = null;
+
+    #[Gedmo\TreeRoot]
+    #[ORM\Column(name: 'root', type: 'integer', nullable: true, unique: false)]
+    protected ?int $root = null;
+
+    #[Groups(['branch:read', 'branch:write'])]
+    #[Gedmo\TreeParent]
+    #[ORM\ManyToOne(targetEntity: self::class, inversedBy: 'children')]
+    #[ORM\JoinColumn(name: 'parent_id', referencedColumnName: 'id', onDelete: 'SET NULL')]
+    protected ?BranchSync $parent = null;
+
+    /**
+     * @var BranchSync[]|Collection
+     */
+    #[ORM\OneToMany(targetEntity: self::class, mappedBy: 'parent')]
+    #[ORM\OrderBy(['lft' => 'ASC'])]
+    protected Collection $children;
+
+    public function __construct()
+    {
+        $this->children = new ArrayCollection();
+        $this->uniqueId = sha1(uniqid());
+        $this->sslPubKey = sha1(uniqid());
+        $this->description = '';
+        // $this->lastSyncTransDate = new \DateTime();
+    }
+
+    /**
+     * Get id.
+     *
+     * @return int
+     */
+    public function getId()
+    {
+        return $this->id;
+    }
+
+    public function setTitle(string $title): self
+    {
+        $this->title = $title;
+
+        return $this;
+    }
+
+    /**
+     * Get title.
+     *
+     * @return string
+     */
+    public function getTitle()
+    {
+        return $this->title;
+    }
+
+    public function setBranchIp(?string $branchIp): self
+    {
+        $this->branchIp = $branchIp;
+
+        return $this;
+    }
+
+    /**
+     * Get branchIp.
+     *
+     * @return string
+     */
+    public function getBranchIp()
+    {
+        return $this->branchIp;
+    }
+
+    public function setLatitude(?string $latitude): self
+    {
+        $this->latitude = $latitude;
+
+        return $this;
+    }
+
+    /**
+     * Get latitude.
+     */
+    public function getLatitude(): ?string
+    {
+        return $this->latitude;
+    }
+
+    public function setLongitude(?string $longitude): self
+    {
+        $this->longitude = $longitude;
+
+        return $this;
+    }
+
+    /**
+     * Get longitude.
+     */
+    public function getLongitude(): ?string
+    {
+        return $this->longitude;
+    }
+
+    /**
+     * Set dwnSpeed.
+     *
+     * @return BranchSync
+     */
+    public function setDwnSpeed(?int $dwnSpeed)
+    {
+        $this->dwnSpeed = $dwnSpeed;
+
+        return $this;
+    }
+
+    /**
+     * Get dwnSpeed.
+     *
+     * @return int
+     */
+    public function getDwnSpeed()
+    {
+        return $this->dwnSpeed;
+    }
+
+    /**
+     * Set upSpeed.
+     *
+     * @return BranchSync
+     */
+    public function setUpSpeed(?int $upSpeed)
+    {
+        $this->upSpeed = $upSpeed;
+
+        return $this;
+    }
+
+    /**
+     * Get upSpeed.
+     *
+     * @return int
+     */
+    public function getUpSpeed()
+    {
+        return $this->upSpeed;
+    }
+
+    /**
+     * Set delay.
+     *
+     * @return BranchSync
+     */
+    public function setDelay(?int $delay)
+    {
+        $this->delay = $delay;
+
+        return $this;
+    }
+
+    /**
+     * Get delay.
+     *
+     * @return int
+     */
+    public function getDelay()
+    {
+        return $this->delay;
+    }
+
+    /**
+     * Set adminMail.
+     *
+     * @return BranchSync
+     */
+    public function setAdminMail(?string $adminMail)
+    {
+        $this->adminMail = $adminMail;
+
+        return $this;
+    }
+
+    /**
+     * Get adminMail.
+     *
+     * @return string
+     */
+    public function getAdminMail()
+    {
+        return $this->adminMail;
+    }
+
+    /**
+     * Set adminName.
+     *
+     * @return BranchSync
+     */
+    public function setAdminName(?string $adminName)
+    {
+        $this->adminName = $adminName;
+
+        return $this;
+    }
+
+    /**
+     * Get adminName.
+     *
+     * @return string
+     */
+    public function getAdminName()
+    {
+        return $this->adminName;
+    }
+
+    /**
+     * Set adminPhone.
+     *
+     * @return BranchSync
+     */
+    public function setAdminPhone(?string $adminPhone)
+    {
+        $this->adminPhone = $adminPhone;
+
+        return $this;
+    }
+
+    /**
+     * Get adminPhone.
+     *
+     * @return string
+     */
+    public function getAdminPhone()
+    {
+        return $this->adminPhone;
+    }
+
+    /**
+     * Set lastSyncTransId.
+     *
+     * @return BranchSync
+     */
+    public function setLastSyncTransId(?int $lastSyncTransId)
+    {
+        $this->lastSyncTransId = $lastSyncTransId;
+
+        return $this;
+    }
+
+    /**
+     * Get lastSyncTransId.
+     *
+     * @return int
+     */
+    public function getLastSyncTransId()
+    {
+        return $this->lastSyncTransId;
+    }
+
+    /**
+     * Set lastSyncTransDate.
+     *
+     * @return BranchSync
+     */
+    public function setLastSyncTransDate(?DateTime $lastSyncTransDate)
+    {
+        $this->lastSyncTransDate = $lastSyncTransDate;
+
+        return $this;
+    }
+
+    /**
+     * Set sslPubKey.
+     *
+     * @return BranchSync
+     */
+    public function setSslPubKey(?string $sslPubKey)
+    {
+        $this->sslPubKey = $sslPubKey;
+
+        return $this;
+    }
+
+    /**
+     * Get sslPubKey.
+     *
+     * @return string
+     */
+    public function getSslPubKey()
+    {
+        return $this->sslPubKey;
+    }
+
+    /**
+     * Set sslPubKey.
+     *
+     * @return BranchSync
+     */
+    public function setBranchType(?string $branchType)
+    {
+        $this->branchType = $branchType;
+
+        return $this;
+    }
+
+    /**
+     * Get sslPubKey.
+     *
+     * @return string
+     */
+    public function getBranchType()
+    {
+        return $this->branchType;
+    }
+
+    /**
+     * Get lastSyncTransDate.
+     *
+     * @return DateTime
+     */
+    public function getLastSyncTransDate()
+    {
+        return $this->lastSyncTransDate;
+    }
+
+    /**
+     * Set lastSyncType.
+     *
+     * @return BranchSync
+     */
+    public function setLastSyncType(?string $lastSyncType)
+    {
+        $this->lastSyncType = $lastSyncType;
+
+        return $this;
+    }
+
+    /**
+     * Get lastSyncType.
+     *
+     * @return string
+     */
+    public function getLastSyncType()
+    {
+        return $this->lastSyncType;
+    }
+
+    /**
+     * Set lft.
+     *
+     * @return BranchSync
+     */
+    public function setLft(int $lft)
+    {
+        $this->lft = $lft;
+
+        return $this;
+    }
+
+    /**
+     * Get lft.
+     *
+     * @return int
+     */
+    public function getLft()
+    {
+        return $this->lft;
+    }
+
+    /**
+     * Set rgt.
+     *
+     * @return BranchSync
+     */
+    public function setRgt(int $rgt)
+    {
+        $this->rgt = $rgt;
+
+        return $this;
+    }
+
+    /**
+     * Get rgt.
+     *
+     * @return int
+     */
+    public function getRgt()
+    {
+        return $this->rgt;
+    }
+
+    /**
+     * Set lvl.
+     *
+     * @return BranchSync
+     */
+    public function setLvl(int $lvl)
+    {
+        $this->lvl = $lvl;
+
+        return $this;
+    }
+
+    /**
+     * Get lvl.
+     *
+     * @return int
+     */
+    public function getLvl()
+    {
+        return $this->lvl;
+    }
+
+    /**
+     * Set root.
+     *
+     * @return BranchSync
+     */
+    public function setRoot(int $root)
+    {
+        $this->root = $root;
+
+        return $this;
+    }
+
+    /**
+     * Get root.
+     *
+     * @return int
+     */
+    public function getRoot()
+    {
+        return $this->root;
+    }
+
+    public function setParent(?self $parent = null): self
+    {
+        $this->parent = $parent;
+
+        return $this;
+    }
+
+    public function getParent(): ?self
+    {
+        return $this->parent;
+    }
+
+    public function getUniqueId(): string
+    {
+        return $this->uniqueId;
+    }
+
+    public function setUniqueId(string $uniqueId): self
+    {
+        $this->uniqueId = $uniqueId;
+
+        return $this;
+    }
+
+    public function getDescription(): string
+    {
+        return $this->description;
+    }
+
+    public function setDescription(string $description): self
+    {
+        $this->description = $description;
+
+        return $this;
+    }
+
+    public function getUrl(): AccessUrl
+    {
+        return $this->url;
+    }
+
+    public function setUrl(AccessUrl $url): self
+    {
+        $this->url = $url;
+
+        return $this;
+    }
+
+    /**
+     * @return BranchSync[]|Collection
+     */
+    public function getChildren(): array|Collection
+    {
+        return $this->children;
+    }
+}

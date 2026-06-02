@@ -1,0 +1,47 @@
+.p-inputtext {
+  @apply text-body-2 text-gray-90 bg-white border border-solid border-gray-50 transition-colors appearance-none rounded-lg outline-transparent w-full;
+  padding: calc(0.625rem - 1px) calc(0.75rem - 1px);
+
+  &:enabled {
+    @apply hover:border-primary
+      focus:border-primary focus:outline-0 focus:outline-none;
+  }
+
+  &.p-invalid {
+    @apply border-danger;
+
+    &::placeholder {
+        @apply text-danger;
+    }
+  }
+
+  &.p-variant-filled {
+    @apply bg-support-1;
+
+    &:enabled { }
+
+    &.p-filled {
+      @apply text-primary;
+    }
+  }
+
+  &:disabled {
+    @apply border-gray-50 text-gray-50;
+  }
+
+  &::placeholder {
+    @apply text-gray-50;
+  }
+
+  &-sm {
+    padding: calc(0.375rem - 1px) calc(0.75rem - 1px);
+  }
+
+  &-lg {
+    padding: calc(0.75rem - 1px);
+  }
+
+  &-fluid {
+    @apply w-full
+  }
+}

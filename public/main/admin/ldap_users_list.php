@@ -1,0 +1,276 @@
+<?php
+
+/* For licensing terms, see /license.txt */
+
+/**
+ * @author Mustapha Alouani
+ */
+
+use Chamilo\CoreBundle\Enums\ActionIcon;
+use Chamilo\CoreBundle\Framework\Container;
+use Chamilo\CoreBundle\Helpers\LdapAuthenticatorHelper;
+use Chamilo\CoreBundle\Security\Authenticator\Ldap\LdapAuthenticator;
+use Symfony\Component\Ldap\Security\LdapUserProvider;
+
+$cidReset = true;
+
+require_once __DIR__.'/../inc/global.inc.php';
+
+$this_section = SECTION_PLATFORM_ADMIN;
+
+api_protect_admin_script();
+
+/** @var LdapAuthenticatorHelper $ldapHelper */
+$ldapHelper = Container::$container->get(LdapAuthenticatorHelper::class);
+$userRepo = Container::getUserRepository();
+
+$action = $_GET["action"] ?? null;
+$login_as_user_id = $_GET["user_id"] ?? null;
+
+// Login as ...
+if ("login_as" == $action && !empty($login_as_user_id)) {
+    login_user($login_as_user_id);
+}
+
+//if we already have a session id and a user...
+/*
+if (($_GET['action']=="add_user") && ($_GET['id_session'] == strval(intval($_GET['id_session']))) && $_GET['id_session']>0 ){
+    header('Location: ldap_import_students_to_session.php?id_session='.$_GET['id_session'].'&ldap_user='.$_GET['id']);
+}
+*/
+
+$interbreadcrumb[] = ["url" => 'index.php', "name" => get_lang('Administration')];
+$tool_name = get_lang('Search for LDAP users');
+//Display::display_header($tool_name); //cannot display now as we need to redirect
+//Display::page_subheader2($tool_name);
+
+if (isset($_GET['action'])) {
+    $check = Security::check_token('get');
+    if ($check) {
+        switch ($_GET['action']) {
+            case 'show_message':
+                Display::addFlash(Display::return_message(htmlspecialchars($_GET['message'], ENT_QUOTES), 'normal'));
+                Display::display_header($tool_name);
+                break;
+            case 'delete_user':
+                if ($user_id != $_user['user_id'] && UserManager::delete_user($_GET['user_id'])) {
+                    Display::addFlash(Display::return_message(get_lang('The user has been deleted'), 'normal'));
+                } else {
+                    Display::addFlash(Display::return_message(get_lang('You cannot delete this user'), 'error'));
+                }
+                Display::display_header($tool_name);
+                break;
+            case 'lock':
+                $message = lock_unlock_user('lock', $_GET['user_id']);
+                Display::addFlash(Display::return_message($message, 'normal'));
+                Display::display_header($tool_name);
+                break;
+            case 'unlock':
+                $message = lock_unlock_user('unlock', $_GET['user_id']);
+                Display::addFlash(Display::return_message($message, 'normal'));
+                Display::display_header($tool_name);
+                break;
+            case 'add_user':
+                $id = $_GET['id'];
+                $UserList = [];
+                $userid_match_login = [];
+                $errors = [];
+                foreach ($id as $user_id) {
+                    try {
+                        /** @var LdapAuthenticator $userAuthenticator */
+                        $userAuthenticator = Container::$container->get(LdapAuthenticator::class);
+                        $ldapUser = $ldapHelper->findLdapUserByIdentifier($user_id);
+                        if (null === $ldapUser) {
+                            $errors[] = $user_id.': '.get_lang('User not found');
+                            continue;
+                        }
+                        $user = $userAuthenticator->createUser($ldapUser);
+
+                        $UserList[] = $user->getId();
+                        $userid_match_login[$user->getId()] = $user_id;
+                    } catch (Exception $e) {
+                        $errors[] = $user_id.': '.$e->getMessage();
+                    }
+                }
+                if (isset($_GET['id_session']) && ($_GET['id_session'] == strval(intval($_GET['id_session']))) && ($_GET['id_session'] > 0)) {
+                    if (!empty($UserList)) {
+                        ldap_add_user_to_session($UserList, $_GET['id_session']);
+                    }
+                    if (!empty($errors)) {
+                        foreach ($errors as $error) {
+                            Display::addFlash(Display::return_message($error, 'error'));
+                        }
+                    }
+                    header('Location: resume_session.php?id_session='.intval($_GET['id_session']));
+                } else {
+                    if (count($userid_match_login) > 0) {
+                        $message = get_lang('LDAP users added or updated').':<br />';
+                        foreach ($userid_match_login as $user_id => $login) {
+                            $message .= '- '.$login.'<br />';
+                        }
+                        Display::addFlash(Display::return_message($message, 'normal', false));
+                    }
+                    if (!empty($errors)) {
+                        foreach ($errors as $error) {
+                            Display::addFlash(Display::return_message($error, 'error'));
+                        }
+                    }
+                    if (empty($userid_match_login) && empty($errors)) {
+                        Display::addFlash(Display::return_message(get_lang('No user added'), 'normal'));
+                    }
+                    Display::display_header($tool_name);
+                }
+                break;
+            default:
+                Display::display_header($tool_name);
+        }
+        Security::clear_token();
+    } else {
+        Display::display_header($tool_name);
+    }
+} else {
+    Display::display_header($tool_name);
+}
+
+if (isset($_POST['action'])) {
+    $check = Security::check_token('get');
+    if ($check) {
+        switch ($_POST['action']) {
+            case 'delete':
+                $number_of_selected_users = count($_POST['id']);
+                $number_of_deleted_users = 0;
+                foreach ($_POST['id'] as $index => $user_id) {
+                    if ($user_id != $_user['user_id']) {
+                        if (UserManager::delete_user($user_id)) {
+                            $number_of_deleted_users++;
+                        }
+                    }
+                }
+                if ($number_of_selected_users == $number_of_deleted_users) {
+                    echo Display::return_message(get_lang('Selected users deleted'), 'normal');
+                } else {
+                    echo Display::return_message(get_lang('Some of the selected users have not been deleted. We recommend you confirm which, by using the advanced search.'), 'error');
+                }
+                break;
+            case 'add_user':
+                $number_of_selected_users = count($_POST['id']);
+                $UserList = [];
+                foreach ($_POST['id'] as $index => $user_id) {
+                    try {
+                        /** @var LdapAuthenticator $userAuthenticator */
+                        $userAuthenticator = Container::$container->get(LdapAuthenticator::class);
+                        $ldapUser = $ldapHelper->findLdapUserByIdentifier($user_id);
+                        if (null === $ldapUser) {
+                            continue;
+                        }
+                        $user = $userAuthenticator->createUser($ldapUser);
+                        $UserList[] = $user->getId();
+                    } catch (Exception $e) {
+                        echo Display::return_message($user_id.': '.$e->getMessage(), 'error');
+                    }
+                }
+                if (isset($_GET['id_session']) && ("" != trim($_GET['id_session']))) {
+                    addUserToSession($UserList, $_GET['id_session']);
+                }
+                if (count($UserList) > 0) {
+                    echo Display::return_message(
+                        count($UserList)." ".get_lang('LDAP users added')
+                    );
+                } else {
+                    echo Display::return_message(get_lang('No user added'));
+                }
+                break;
+        }
+        Security::clear_token();
+    }
+}
+
+$form = new FormValidator('advanced_search', 'get');
+$form->addText('keyword_username', get_lang('Username'), false);
+if (api_is_western_name_order()) {
+    $form->addText('keyword_firstname', get_lang('First name'), false);
+    $form->addText('keyword_lastname', get_lang('Last name'), false);
+} else {
+    $form->addText('keyword_lastname', get_lang('Last name'), false);
+    $form->addText('keyword_firstname', get_lang('First name'), false);
+}
+if (isset($_GET['id_session'])) {
+    $form->addElement('hidden', 'id_session', $_GET['id_session']);
+}
+
+$type = [];
+$type["all"] = get_lang('All');
+$type["employee"] = get_lang('Trainer');
+$type["student"] = get_lang('Learner');
+
+$form->addSelect('keyword_type', get_lang('Status'), $type);
+// Structure a rajouer ??
+$form->addButtonSearch(get_lang('Validate'));
+//$defaults['keyword_active'] = 1;
+//$defaults['keyword_inactive'] = 1;
+//$form->setDefaults($defaults);
+$form->display();
+$parameters['keyword_username'] = $_GET['keyword_username'] ?? null;
+$parameters['keyword_firstname'] = $_GET['keyword_firstname'] ?? null;
+$parameters['keyword_lastname'] = $_GET['keyword_lastname'] ?? null;
+$parameters['keyword_email'] = $_GET['keyword_email'] ?? null;
+if (isset($_GET['id_session'])) {
+    $parameters['id_session'] = $_GET['id_session'];
+}
+// Create a sortable table with user-data
+
+$parameters['sec_token'] = Security::get_token();
+$table = new SortableTable(
+    'users',
+    $ldapHelper->countUsers(...),
+    $ldapHelper->getAllUsers(...),
+    (api_is_western_name_order() xor api_sort_by_first_name()) ? 3 : 2
+);
+$table->set_additional_parameters($parameters);
+$table->set_header(0, '', false);
+$table->set_header(1, get_lang('Login'));
+if (api_is_western_name_order()) {
+    $table->set_header(2, get_lang('First name'));
+    $table->set_header(3, get_lang('Last name'));
+} else {
+    $table->set_header(2, get_lang('Last name'));
+    $table->set_header(3, get_lang('First name'));
+}
+$table->set_header(4, get_lang('E-mail'));
+$table->set_header(5, get_lang('Detail'));
+$table->set_column_filter(
+    5,
+    function (string $username, string $urlParams, array $row) use ($userRepo) {
+        $icon = ActionIcon::REFRESH;
+
+        if ($userRepo->isUsernameAvailable($username)) {
+            $icon = ActionIcon::ADD_USER;
+        }
+
+        $queryParams = [
+            'id' => [$username],
+            'action' => 'add_user',
+            'sec_token' => Security::getTokenFromSession(),
+        ];
+
+        return Display::url(
+            Display::getMdiIcon($icon, '', null, ICON_SIZE_SMALL, get_lang('Add users')),
+            'ldap_users_list.php?'.http_build_query($queryParams),
+            [
+                'data-title' => addslashes(api_htmlentities(get_lang("Please confirm your choice"))),
+                'data-confirm-text' => get_lang('Yes'),
+                'data-cancel-text' => get_lang('Cancel'),
+                'class' => 'delete-swal',
+            ]
+        );
+    }
+);
+$table->set_form_actions(['add_user' => get_lang('Add LDAP users')]);
+
+try {
+    $table->display();
+} catch (Exception $exception) {
+    echo Display::return_message($exception->getMessage());
+}
+
+Display::display_footer();

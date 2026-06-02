@@ -1,0 +1,22 @@
+<?php
+
+/* For licensing terms, see /license.txt */
+
+$cidReset = true;
+
+require_once __DIR__.'/../inc/global.inc.php';
+
+if ('false' === api_get_setting('work.allow_my_student_publication_page')) {
+    api_not_allowed(true);
+}
+
+api_block_anonymous_users();
+
+$tpl = new Template(get_lang('Assignments'));
+
+$tpl->assign('intro_title', get_lang('All Assignments'));
+$tpl->assign('intro_content', Display::return_message(get_lang('You will find below all your assignment from all the courses and session in which you are registered.')));
+$tpl->assign('table', showStudentAllWorkGrid(0));
+$tpl->assign('table_with_results', showStudentAllWorkGrid(1));
+
+$tpl->display($tpl->get_template('work/publications.tpl'));

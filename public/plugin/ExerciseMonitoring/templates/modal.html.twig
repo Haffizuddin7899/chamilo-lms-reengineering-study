@@ -1,0 +1,109 @@
+{% autoescape false %}
+{% if ExerciseMonitoring.show_overview_region and ExerciseMonitoring.enabled %}
+    {% if ExerciseMonitoring.enable_snapshots %}
+        <dialog id="em-modal-start" class="legacy-modal" data-exercise-id="{{ ExerciseMonitoring.exercise_id }}">
+            <div class="legacy-modal__content">
+                <div class="legacy-modal__header">
+                    <h4 class="legacy-modal__title">{{ 'ExerciseMonitored'|get_plugin_lang('ExerciseMonitoringPlugin') }}</h4>
+                </div>
+
+                <div class="legacy-modal__body" id="em-terms-body">
+                    {{ ExerciseMonitoring.instructions }}
+                </div>
+
+                <div class="legacy-modal__body text-center" id="em-camera-body" style="display: none;">
+                    <p id="txt-iddoc-img-instructions" class="text-lg" style="display: block;">
+                        {{ 'ImageIdDocumentCameraInstructions'|get_plugin_lang('ExerciseMonitoringPlugin') }}
+                    </p>
+                    <p id="txt-learner-img-instructions" class="text-lg" style="display: none;">
+                        {{ 'ImageStudentCameraInstructions'|get_plugin_lang('ExerciseMonitoringPlugin') }}
+                    </p>
+                    <div style="position: relative">
+                        <div id="monitoring-camera" class="embed-responsive embed-responsive-4by3"></div>
+                        <img id="img-iddoc-placeholder" style="display: block;" src="/plugin/ExerciseMonitoring/assets/images/idcard.png">
+                        <img id="img-learner-placeholder" style="display: none" src="/plugin/ExerciseMonitoring/assets/images/user.png">
+                    </div>
+                    <br>
+                    <button class="btn btn--plain-outline" type="button" id="btn-snap" disabled>
+                        <span class="mdi mdi-camera" aria-hidden="true"></span>
+                        {{ 'Snapshot'|get_lang }}
+                    </button>
+                </div>
+
+                <div class="legacy-modal__body text-center" id="em-iddoc-body" style="display: none;">
+                    <p class="text-lg">{{ 'IdDocumentSnapshot'|get_plugin_lang('ExerciseMonitoringPlugin') }}</p>
+                    <div id="img-iddoc"></div>
+                </div>
+
+                <div class="legacy-modal__body text-center" id="em-student-body" style="display: none;">
+                    <p class="text-lg">{{ 'StudentSnapshot'|get_plugin_lang('ExerciseMonitoringPlugin') }}</p>
+                    <div id="img-learner"></div>
+                </div>
+
+                <div id="em-terms-footer" class="legacy-modal__footer">
+                    <button type="button" class="btn btn--secondary" id="btn-accept">
+                        <span class="mdi mdi-check" aria-hidden="true"></span> {{ 'Accept'|get_lang }}
+                    </button>
+                </div>
+
+                <div id="em-camera-footer" class="legacy-modal__footer" style="display: none;">
+                    <button class="btn btn--plain-outline" type="button" id="btn-retry" disabled>
+                        <span class="mdi mdi-refresh" aria-hidden="true"></span>
+                        {{ 'Retry'|get_plugin_lang('ExerciseMonitoringPlugin') }}
+                    </button>
+                    <button class="btn btn--secondary" type="button" id="btn-next" disabled>
+                        <span class="mdi mdi-forward" aria-hidden="true"></span> {{ 'Next'|get_lang }}
+                    </button>
+                </div>
+            </div>
+        </dialog>
+
+        <script src="/plugin/ExerciseMonitoring/assets/js/webcamjs-1.0.6/webcam.min.js"></script>
+        <script src="/plugin/ExerciseMonitoring/assets/js/modal-snapshots.js"></script>
+        <style>
+            #em-modal-start {
+                max-width: 672px;
+                width: 90%;
+            }
+            #monitoring-camera {
+                height: auto !important;
+                max-width: 100% !important;
+                margin: 0 auto;
+            }
+
+            #em-camera-body img#img-iddoc-placeholder,
+            #em-camera-body img#img-learner-placeholder {
+                height: auto;
+                left: 0;
+                position: absolute;
+                top: 0;
+                width: 100%;
+            }
+
+            #monitoring-camera video {
+                height: auto !important;
+                max-width: 100%;
+            }
+        </style>
+    {% else %}
+        <dialog id="em-modal-start" class="rounded-lg">
+            <div class="legacy-modal__content">
+                <div class="legacy-modal__header">
+                    <h4 class="legacy-modal__title">{{ 'ExerciseMonitored'|get_plugin_lang('ExerciseMonitoringPlugin') }}</h4>
+                </div>
+
+                <div class="legacy-modal__body" id="em-terms-body">
+                    {{ ExerciseMonitoring.instructions }}
+                </div>
+
+                <div id="em-terms-footer" class="legacy-modal__footer">
+                    <button type="button" class="btn btn--primary" id="btn-accept-simple">
+                        <span class="mdi mdi-check" aria-hidden="true"></span> {{ 'Accept'|get_lang }}
+                    </button>
+                </div>
+            </div>
+        </dialog>
+        <script src="/plugin/ExerciseMonitoring/assets/js/modal-simple.js"></script>
+    {% endif %}
+{% endif %}
+{% endautoescape %}

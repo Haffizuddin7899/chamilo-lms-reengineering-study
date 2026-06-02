@@ -1,0 +1,97 @@
+//@import "base_theme";
+//
+//// Tools
+//@import "inbox";
+//@import "install";
+
+@forward "settings/typography";
+@forward "settings/component";
+
+@forward "atoms/form";
+@forward "atoms/autocomplete";
+@forward "atoms/avatar";
+@forward "atoms/buttons";
+@forward "atoms/icon";
+@forward "atoms/calendar";
+@forward "atoms/checkbox";
+@forward "atoms/color_picker";
+@forward "atoms/divider";
+@forward "atoms/fieldset";
+@forward "atoms/float_label";
+@forward "atoms/inline_message";
+@forward "atoms/inplace";
+@forward "atoms/inputgroup";
+@forward "atoms/input_icon";
+@forward "atoms/input_switch";
+@forward "atoms/input_text";
+@forward "atoms/input_number";
+@forward "atoms/messages";
+@forward "atoms/multiselect";
+@forward "atoms/overlay";
+@forward "atoms/password";
+@forward "atoms/platform_logo";
+@forward "atoms/progressbar";
+@forward "atoms/radio";
+@forward "atoms/rating";
+@forward "atoms/select";
+@forward "atoms/skeleton";
+@forward "atoms/tags";
+@forward "atoms/textarea";
+@forward "atoms/toast";
+@forward "atoms/wysiwyg";
+
+@forward "molecules/chip";
+@forward "molecules/course_tool";
+@forward "molecules/empty_state";
+@forward "molecules/teacher_bar";
+@forward "molecules/toolbar";
+@forward "molecules/legacy_panel";
+
+@forward "organisms/cards";
+@forward "organisms/course_card";
+@forward "organisms/datatable";
+@forward "organisms/dataview";
+@forward "organisms/external_logins";
+@forward "organisms/dialog";
+@forward "organisms/legacy_modal";
+@forward "organisms/lp_panel";
+@forward "organisms/menu";
+@forward "organisms/sidebar";
+@forward "organisms/section_header";
+@forward "organisms/tables";
+@forward "organisms/install";
+
+@forward "components/badges";
+//@import "announcement";
+
+@forward "layout/topbar";
+@forward "layout/breadcrumb";
+@forward "layout/main_container";
+
+@forward "admin_index";
+@forward "admin_settings";
+@forward "calendar";
+@forward "course_home";
+
+@forward "documents";
+
+@forward "login";
+
+@forward "forums";
+@forward "exercise";
+@forward "catalog_course";
+@forward "catalog_session";
+//@import "jqueryui";
+@forward "lp";
+@forward "messages";
+@forward "userreluser";
+@forward "social";
+@forward "skill";
+@forward "survey";
+@forward "chat";
+@forward "blog";
+@forward "course_maintenance";
+@forward "reporting";
+
+@forward "libs/mediaelementjs/styles";
+@forward "libs/fullcalendar/index";

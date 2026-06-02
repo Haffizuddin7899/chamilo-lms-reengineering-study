@@ -1,0 +1,14 @@
+<h4>{{ 'Approval for new account'|get_lang }}</h4>
+<ul>
+    <li>{{ 'Username'|get_lang }}: {{ user.getUsername() }}</li>
+    {% if is_western_name_order %}
+        <li>{{ 'First name'|get_lang }}: {{ user.getFirstName() }}</li>
+        <li>{{ 'Last name' }}: {{ user.getLastName() }}</li>
+    {% else  %}
+        <li>{{ 'Last name' }}: {{ user.getLastName() }}</li>
+        <li>{{ 'First name' }}: {{ user.getFirstName() }}</li>
+    {% endif %}
+    <li>{{ 'E-mail'|get_lang }}: {{ user.getEmail() }}</li>
+    <li>{{ 'Status'|get_lang }}: {{ user.getStatus() }}</li>
+</ul>
+<p>{{ 'Manage user'|get_lang }}: <a href="{{ manageUrl }}">{{ manageUrl }}</a></p>

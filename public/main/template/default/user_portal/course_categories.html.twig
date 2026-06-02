@@ -1,0 +1,34 @@
+{% import '@ChamiloCore/Macros/box.html.twig' as macro %}
+
+<h2>{{ 'Course category'|get_lang }}</h2>
+<p>{{ 'You will find below the list of course categories.'|get_lang }}</p>
+{% autoescape false %}
+<div class="category-list">
+    {% for category in course_categories %}
+        {% if category %}
+
+            {% set image %}
+                <img src="{{ category.image ? _p.web_upload ~ category.image : 'session_default.png'|icon(128) }}"
+                     alt="{{ category.title }}" class="">
+            {% endset %}
+
+            {% set title %}
+                <a href="{{ app.request.requestUri ~ '?' ~ {'category':category.code}|url_encode }}">
+                <h5 class="title">
+                    {{ category.title }}
+                </h5>
+                <div class="courses">{{ category.course_count }} {{ 'Courses'|get_lang }}</div>
+                </a>
+            {% endset %}
+
+            {% set subtitle %}
+                {{ category.code }}
+            {% endset %}
+
+            {{ macro.box_category_course('category', title,image) }}
+
+        {% endif %}
+
+    {% endfor %}
+</div>
+{% endautoescape %}

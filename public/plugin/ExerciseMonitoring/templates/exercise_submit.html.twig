@@ -1,0 +1,32 @@
+{% autoescape false %}
+{% if ExerciseMonitoring.show_submit_region and ExerciseMonitoring.enabled and ExerciseMonitoring.enable_snapshots %}
+    {% set ALL_ON_ONE_PAGE = ExerciseMonitoring.exercise_type == 1 %}
+    {% set ONE_PER_PAGE = ExerciseMonitoring.exercise_type == 2 %}
+
+    <div
+        id="monitoring-camera"
+        data-exercise-id="{{ ExerciseMonitoring.exercise_id }}"
+        data-exercise-type="{{ ExerciseMonitoring.exercise_type }}"
+    ></div>
+
+    <script src="/plugin/ExerciseMonitoring/assets/js/webcamjs-1.0.6/webcam.min.js"></script>
+    <script src="/plugin/ExerciseMonitoring/assets/js/exercise-submit.js"></script>
+    <style>
+        #plugin_pre_footer {
+            position: relative;
+        }
+        #monitoring-camera {
+            bottom: 15px;
+            right: 15px;
+            max-width: 108px;
+            max-height: 81px;
+            position: fixed;
+            z-index: 1015;
+        }
+        #monitoring-camera video {
+            max-width: 108px;
+            max-height: 81px;
+        }
+    </style>
+{% endif %}
+{% endautoescape %}

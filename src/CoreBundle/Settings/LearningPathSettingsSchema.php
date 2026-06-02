@@ -1,0 +1,140 @@
+<?php
+
+declare(strict_types=1);
+
+/* For licensing terms, see /license.txt */
+
+namespace Chamilo\CoreBundle\Settings;
+
+use Chamilo\CoreBundle\Form\Type\YesNoType;
+use Sylius\Bundle\SettingsBundle\Schema\AbstractSettingsBuilder;
+use Symfony\Component\Form\Extension\Core\Type\ChoiceType;
+use Symfony\Component\Form\Extension\Core\Type\TextareaType;
+use Symfony\Component\Form\Extension\Core\Type\TextType;
+use Symfony\Component\Form\FormBuilderInterface;
+
+class LearningPathSettingsSchema extends AbstractSettingsSchema
+{
+    public function buildSettings(AbstractSettingsBuilder $builder): void
+    {
+        $builder->setDefaults([
+            'show_invisible_exercise_in_lp_toc' => 'false',
+            'add_all_files_in_lp_export' => 'false',
+            'show_prerequisite_as_blocked' => 'false',
+            'hide_lp_time' => 'false',
+            'lp_view_accordion' => 'false',
+            'disable_js_in_lp_view' => 'false',
+            'allow_teachers_to_access_blocked_lp_by_prerequisite' => 'false',
+            'allow_lp_chamilo_export' => 'false',
+            'hide_accessibility_label_on_lp_item' => 'true',
+            'lp_minimum_time' => 'false',
+            'validate_lp_prerequisite_from_other_session' => 'false',
+            'show_hidden_exercise_added_to_lp' => 'true',
+            'lp_menu_location' => 'left',
+            'lp_score_as_progress_enable' => 'false',
+            'lp_prevents_beforeunload' => 'false',
+            'disable_my_lps_page' => 'false',
+            'scorm_api_username_as_student_id' => 'false',
+            'scorm_api_extrafield_to_use_as_student_id' => '',
+            'allow_import_scorm_package_in_course_builder' => 'false',
+            'allow_htaccess_import_from_scorm' => 'false',
+            'allow_session_lp_category' => 'false',
+            'ticket_lp_quiz_info_add' => 'false',
+            'lp_subscription_settings' => '',
+            'lp_view_settings' => '',
+            'download_files_after_all_lp_finished' => '',
+            'allow_lp_subscription_to_usergroups' => 'false',
+            'lp_fixed_encoding' => 'false',
+            'lp_prerequisite_use_last_attempt_only' => 'false',
+            'show_invisible_exercise_in_lp_list' => 'false',
+            'force_edit_exercise_in_lp' => 'false',
+            'student_follow_page_add_LP_subscription_info' => 'false',
+            'lp_show_max_progress_instead_of_average' => 'false',
+            'lp_show_max_progress_or_average_enable_course_level_redefinition' => 'false',
+            'lp_allow_export_to_students' => 'false',
+            'show_invisible_lp_in_course_home' => 'false',
+            'lp_start_and_end_date_visible_in_student_view' => 'false',
+            'scorm_lms_update_sco_status_all_time' => 'false',
+            'scorm_upload_from_cache' => 'false',
+            'lp_prerequisite_on_quiz_unblock_if_max_attempt_reached' => 'false',
+            'student_follow_page_hide_lp_tests_average' => 'false',
+            'student_follow_page_add_lp_acquisition_info' => 'false',
+            'student_follow_page_add_lp_invisible_checkbox' => 'false',
+            'student_follow_page_include_not_subscribed_lp_students' => 'false',
+            'lp_enable_flow' => 'false',
+            'lp_item_prerequisite_dates' => 'false',
+            'allow_lp_return_link' => 'true',
+            'hide_scorm_export_link' => 'false',
+            'hide_scorm_copy_link' => 'false',
+            'hide_scorm_pdf_link' => 'true',
+            'lp_show_reduced_report' => 'false',
+        ]);
+
+        $allowedTypes = [];
+
+        $this->setMultipleAllowedTypes($allowedTypes, $builder);
+    }
+
+    public function buildForm(FormBuilderInterface $builder): void
+    {
+        $builder
+            ->add('show_invisible_exercise_in_lp_toc', YesNoType::class)
+            ->add('add_all_files_in_lp_export', YesNoType::class)
+            ->add('show_prerequisite_as_blocked', YesNoType::class)
+            ->add('hide_lp_time', YesNoType::class)
+            ->add('lp_view_accordion', YesNoType::class)
+            ->add('disable_js_in_lp_view', YesNoType::class)
+            ->add('allow_teachers_to_access_blocked_lp_by_prerequisite', YesNoType::class)
+            ->add('allow_lp_chamilo_export', YesNoType::class)
+            ->add('hide_accessibility_label_on_lp_item', YesNoType::class)
+            ->add('lp_minimum_time', YesNoType::class)
+            ->add('validate_lp_prerequisite_from_other_session', YesNoType::class)
+            ->add('show_hidden_exercise_added_to_lp', YesNoType::class)
+            ->add('lp_menu_location', ChoiceType::class, [
+                'choices' => [
+                    'Left' => 'left',
+                    'Right' => 'right',
+                ],
+            ])
+            ->add('lp_score_as_progress_enable', YesNoType::class)
+            ->add('lp_prevents_beforeunload', YesNoType::class)
+            ->add('disable_my_lps_page', YesNoType::class)
+            ->add('scorm_api_username_as_student_id', YesNoType::class)
+            ->add('scorm_api_extrafield_to_use_as_student_id', TextType::class)
+            ->add('allow_import_scorm_package_in_course_builder', YesNoType::class)
+            ->add('allow_htaccess_import_from_scorm', YesNoType::class)
+            ->add('allow_session_lp_category', YesNoType::class)
+            ->add('ticket_lp_quiz_info_add', YesNoType::class)
+            ->add('lp_subscription_settings', TextareaType::class)
+            ->add('lp_view_settings', TextareaType::class)
+            ->add('download_files_after_all_lp_finished', TextareaType::class)
+            ->add('allow_lp_subscription_to_usergroups', YesNoType::class)
+            ->add('lp_fixed_encoding', YesNoType::class)
+            ->add('lp_prerequisite_use_last_attempt_only', YesNoType::class)
+            ->add('show_invisible_exercise_in_lp_list', YesNoType::class)
+            ->add('force_edit_exercise_in_lp', YesNoType::class)
+            ->add('student_follow_page_add_LP_subscription_info', YesNoType::class)
+            ->add('lp_show_max_progress_instead_of_average', YesNoType::class)
+            ->add('lp_show_max_progress_or_average_enable_course_level_redefinition', YesNoType::class)
+            ->add('lp_allow_export_to_students', YesNoType::class)
+            ->add('show_invisible_lp_in_course_home', YesNoType::class)
+            ->add('lp_start_and_end_date_visible_in_student_view', YesNoType::class)
+            ->add('scorm_lms_update_sco_status_all_time', YesNoType::class)
+            ->add('scorm_upload_from_cache', YesNoType::class)
+            ->add('lp_prerequisite_on_quiz_unblock_if_max_attempt_reached', YesNoType::class)
+            ->add('student_follow_page_hide_lp_tests_average', YesNoType::class)
+            ->add('student_follow_page_add_lp_acquisition_info', YesNoType::class)
+            ->add('student_follow_page_add_lp_invisible_checkbox', YesNoType::class)
+            ->add('student_follow_page_include_not_subscribed_lp_students', YesNoType::class)
+            ->add('lp_enable_flow', YesNoType::class)
+            ->add('lp_item_prerequisite_dates', YesNoType::class)
+            ->add('allow_lp_return_link', YesNoType::class)
+            ->add('hide_scorm_export_link', YesNoType::class)
+            ->add('hide_scorm_copy_link', YesNoType::class)
+            ->add('hide_scorm_pdf_link', YesNoType::class)
+            ->add('lp_show_reduced_report', YesNoType::class)
+        ;
+
+        $this->updateFormFieldsFromSettingsInfo($builder);
+    }
+}

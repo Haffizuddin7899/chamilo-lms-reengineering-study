@@ -1,0 +1,18 @@
+{% macro global_modal(title) %}
+    <dialog id="global-modal" class="legacy-modal">
+        <!--header-->
+        <div class="legacy-modal__header">
+            <h3 class="legacy-modal__title" id="global-modal-title">{{ title }}</h3>
+            <button title="{{ 'Close'|trans }}" id="close-global-model"
+                    class="p-button p-component p-button-icon-only p-button-secondary p-button-rounded p-button-text p-dialog-close-button p-button-sm"
+                    type="button">
+                <span class="p-icon p-button-icon mdi mdi-close"></span>
+            </button>
+        </div>
+        <!--body-->
+        <div class="legacy-modal__body" id="global-modal-body"></div>
+        <!--footer-->
+        <div class="legacy-modal__footer">
+        </div>
+    </dialog>
+{% endmacro %}

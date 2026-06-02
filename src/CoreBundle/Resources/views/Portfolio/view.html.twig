@@ -1,0 +1,99 @@
+{% autoescape false %}
+{% if item.isHighlighted %}
+    <span class="label label-success">
+        {{ 'ActionIcon::STAR'|mdi_icon(22) }}
+        {{ 'Highlighted'|trans }}
+    </span>
+{% endif %}
+
+<article class="portfolio-item">
+    <header>
+        <h4 class="h3">{{ item.title|remove_xss }}</h4>
+
+        <ul class="fa-ul list-inline">
+            <li>
+                <span class="fa-li fa fa-user" aria-hidden="true"></span>
+                {{ item.creator.fullName }}
+            </li>
+            <li>
+                <span class="fa-li fa fa-clock-o" aria-hidden="true"></span>
+                {{ 'Creation date'|trans ~ ': ' }}
+                {{ item.resourceNode.createdAt|date_to_time_ago }}
+            </li>
+
+            {% if last_edit %}
+                <li>
+                    <span class="fa-li fa fa-clock-o" aria-hidden="true"></span>
+                    {{ 'Updated on %s by %s'|trans|format(last_edit.date|date_to_time_ago, last_edit.user) }}
+                </li>
+            {% elseif item.resourceNode.createdAt != item.resourceNode.updatedAte %}
+                <li>
+                    <span class="fa-li fa fa fa-clock-o" aria-hidden="true"></span>
+                    {{ 'Updated on %s'|trans|format(item.resourceNode.updateDate|date_to_time_ago) }}
+                </li>
+            {% endif %}
+
+            {% if course is empty %}
+                {% if session %}
+                    <li>
+                        <span class="fa-li fa fa-book" aria-hidden="true"></span>
+                        {{ 'Course'|trans ~ ': ' ~ session.name ~ ' (' ~ course.title ~ ')' }}
+                    </li>
+                {% elseif not session and course %}
+                    <li>
+                        <span class="fa-li fa fa-book" aria-hidden="true"></span>
+                        {{ 'Course'|trans ~ ': ' ~ course.title }}
+                    </li>
+                {% endif %}
+            {% endif %}
+        </ul>
+    </header>
+
+    {{ item_content|remove_xss }}
+
+    {% if attachment_list %}
+        <section>
+            {{ attachment_list }}
+        </section>
+    {% endif %}
+
+    <section id="portfolio-item-comments">
+        <h1 class="h3">
+            {{ 'ActionIcon::COMMENT'|mdi_icon(22) }}
+            {{ '%s comments'|trans|format(count_comments) }}
+        </h1>
+
+        {{ comments }}
+
+        {{ form }}
+    </section>
+</article>
+
+<script>
+    $(function () {
+        var frmCommentTop = $("#frm_comment").offset().top;
+
+        $('.btn-reply-to').on('click', function (e) {
+            e.preventDefault();
+
+            var comment = $.extend(
+                {},
+                {'id': 0},
+                $(this).data('comment')
+            );
+
+            if (!comment.id) {
+                return;
+            }
+
+            var $frm = $('form#frm_comment');
+
+            $frm.find('#frm_comment_parent').val(comment.id);
+
+            CKEDITOR.instances.content.setData('');
+
+            $('html, body').animate({scrollTop: frmCommentTop});
+        });
+    });
+</script>
+{% endautoescape %}

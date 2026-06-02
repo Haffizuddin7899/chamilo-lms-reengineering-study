@@ -1,0 +1,137 @@
+<div class="flex flex-col md:flex-row gap-6 issued">
+    <div class="w-full md:w-1/5">
+        <div class="border rounded-lg shadow-md p-4">
+            <figure class="text-center">
+                <img class="mx-auto w-full max-w-xs"
+                     src="{{ issue_info.skill_badge_image }}"
+                     alt="{{ issue_info.skill_name }}"
+                >
+                <figcaption>
+                    <p class="text-lg font-semibold">{{ issue_info.skill_name }}</p>
+                    {% if issue_info.skill_short_code %}
+                        <p>{{ issue_info.skill_short_code }}</p>
+                    {% endif %}
+                </figcaption>
+            </figure>
+            <div class="mt-4">
+                {% if issue_info.skill_description %}
+                    <p>{{ issue_info.skill_description }}</p>
+                {% endif %}
+                {% if issue_info.skill_criteria %}
+                    <h4 class="font-bold">{{ 'Criteria to earn the badge'|trans }}</h4>
+                    <p>{{ issue_info.skill_criteria }}</p>
+                {% endif %}
+            </div>
+
+            {% if not personal_badge is empty %}
+                <p class="text-center mt-4">
+                    <a href="{{ personal_badge }}" class="btn btn--primary" target="_blank">
+                        <em class="fa fa-download fa-fw"></em> {{ 'Download badges'|trans }}
+                    </a>
+                </p>
+            {% endif %}
+
+            {% if allow_export %}
+                <hr class="my-4">
+                <p class="text-center">
+                    <a href="#" class="btn btn--success" id="badge-export-button">
+                        <em class="fa fa-external-link-square fa-fw"></em> {{ 'Export badge'|trans }}
+                    </a>
+                </p>
+            {% endif %}
+        </div>
+    </div>
+    <div class="w-full md:w-4/5 px-4">
+        <h3 class="text-xl font-bold">{{ 'Recipient details'|trans }}</h3>
+        <p class="text-lg font-semibold">{{ issue_info.user_complete_name }}</p>
+
+        <h4 class="mt-4 font-bold">{{ 'Skill acquired at'|trans }}</h4>
+        <ul class="list-none">
+            <li class="mt-2">
+                {% if issue_info.source_name %}
+                    <em class="fa fa-clock-o fa-fw"></em>
+                    {{ '%s through %s'|trans|format(issue_info.datetime, issue_info.source_name) }}
+                {% else %}
+                    <em class="fa fa-clock-o fa-fw"></em>
+                    {{ issue_info.datetime }}
+                {% endif %}
+                {% if issue_info.argumentation %}
+                    <p class="italic font-semibold">
+                        {{ 'User %s indicated:'|trans|format(issue_info.argumentation_author_name) }}
+                    </p>
+                    <p>{{ issue_info.argumentation }}</p>
+                {% endif %}
+            </li>
+        </ul>
+
+        {% if show_level %}
+            <h4 class="mt-4 font-bold">{{ 'Level acquired'|trans }}</h4>
+            <ul class="list-none">
+                <li class="mt-2">
+                    <em class="fa fa-check-circle-o fa-fw text-green-500"></em> {{ issue_info.acquired_level }}
+                </li>
+            </ul>
+        {% endif %}
+
+        {% if allow_comment %}
+            {% if show_level %}
+                <hr class="my-4">
+                <div class="border border-blue-300 rounded-lg bg-blue-100 p-4">
+                    <div class="font-bold text-blue-700">
+                        <em class="fa fa-check-circle-o fa-fw"></em> {{ 'Change acquired level'|trans }}
+                    </div>
+                    <div class="mt-2">
+                        {% autoescape false %}{{ acquired_level_form }}{% endautoescape %}
+                    </div>
+                </div>
+            {% endif %}
+            <hr class="my-4">
+            <div class="border border-blue-300 rounded-lg bg-blue-100 p-4">
+                <div class="font-bold text-blue-700">
+                    <em class="fa fa-comment-o fa-fw"></em>
+                    {{ '%s comments'|trans|format(issue_info.comments|length) }}
+                    /
+                    <em class="fa fa-thumbs-o-up fa-fw"></em>
+                    {{ 'Average rating %s'|trans|format(issue_info.feedback_average) }}
+                </div>
+                <div class="mt-2">
+                    {% autoescape false %}{{ comment_form }}{% endautoescape %}
+                    {% if issue_info.comments %}
+                        <hr class="my-4">
+                        {% for comment in issue_info.comments %}
+                            <article class="flex items-start space-x-4">
+                                <div>
+                                    <h4 class="font-bold">{{ comment.giver_complete_name }}</h4>
+                                    <p class="text-sm text-gray-600">{{ comment.datetime }}</p>
+                                    <p>{{ comment.text }}</p>
+                                </div>
+                                <div class="flex justify-end items-center w-20">
+                                    {% if comment.value %}
+                                        <em class="fa fa-certificate fa-fw"></em> {{ comment.value }}
+                                    {% endif %}
+                                </div>
+                            </article>
+                        {% endfor %}
+                    {% endif %}
+                </div>
+            </div>
+        {% else %}
+            <hr class="my-4" />
+            <p class="text-lg font-semibold">
+                <em class="fa fa-comment-o fa-fw"></em> {{ '%s comments'|trans|format(issue_info.comments|length) }}
+                /
+                <em class="fa fa-thumbs-o-up fa-fw"></em> {{ 'Average rating %s'|trans|format(issue_info.feedback_average) }}
+            </p>
+        {% endif %}
+    </div>
+</div>
+{% if allow_export %}
+    <script>
+      $(function() {
+        $("#badge-export-button").on("click", function(e) {
+          e.preventDefault()
+          OpenBadges.issue({{ issue_info.badge_assertion|json_encode() }})
+        })
+      })
+    </script>
+{% endif %}

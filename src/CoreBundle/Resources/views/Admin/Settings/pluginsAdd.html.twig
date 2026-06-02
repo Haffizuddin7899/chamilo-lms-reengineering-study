@@ -1,0 +1,14 @@
+{% extends "@ChamiloCore/Layout/layout_one_col.html.twig" %}
+
+{% block content %}
+    Add
+    <div>
+    {% for plugin in plugins %}
+        <div class="panel panel-default">
+            <div class="panel-heading">{{ plugin | var_dump }} </div>
+            <div class="panel-body">
+            </div>
+        </div>
+    {% endfor %}
+    </div>
+{% endblock%}
