@@ -1,0 +1,25 @@
+@layer components {
+  .empty-state {
+    @apply border border-solid border-support-1 bg-gray-10 flex flex-auto justify-center items-center p-10 rounded-lg;
+
+    &__container {
+      @apply flex flex-col items-center text-center max-w-sm gap-4;
+    }
+
+    &__icon {
+      @apply text-transparent bg-clip-text bg-gradient-to-br from-primary to-primary-gradient w-32 h-32;
+
+      &.mdi {
+        font-size: 8rem;
+      }
+    }
+
+    &__summary {
+      @apply text-body-2 font-semibold text-gray-90;
+    }
+
+    &__detail {
+      @apply text-body-2 text-gray-90 mb-auto;
+    }
+  }
+}

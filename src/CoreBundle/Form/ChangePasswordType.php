@@ -1,0 +1,260 @@
+<?php
+
+declare(strict_types=1);
+
+/* For licensing terms, see /license.txt */
+
+namespace Chamilo\CoreBundle\Form;
+
+use Chamilo\CoreBundle\Entity\User;
+use OTPHP\TOTP;
+use Security;
+use Symfony\Component\Form\AbstractType;
+use Symfony\Component\Form\Extension\Core\Type\CheckboxType;
+use Symfony\Component\Form\Extension\Core\Type\PasswordType;
+use Symfony\Component\Form\Extension\Core\Type\TextType;
+use Symfony\Component\Form\FormBuilderInterface;
+use Symfony\Component\Form\FormError;
+use Symfony\Component\Form\FormEvent;
+use Symfony\Component\Form\FormEvents;
+use Symfony\Component\OptionsResolver\OptionsResolver;
+
+use const OPENSSL_RAW_DATA;
+
+/**
+ * @template T of object
+ *
+ * @extends AbstractType<T>
+ */
+class ChangePasswordType extends AbstractType
+{
+    /**
+     * Prefix used to identify HKDF-based encryption format for MFA secrets.
+     * Legacy secrets have no prefix and remain readable for backward compatibility.
+     */
+    private const MFA_SECRET_V2_PREFIX = 'v2:';
+
+    public function buildForm(FormBuilderInterface $builder, array $options): void
+    {
+        // Add basic fields for password change
+        $builder
+            ->add('currentPassword', PasswordType::class, [
+                'label' => 'Current password',
+                'required' => false,
+                'mapped' => false,
+            ])
+            ->add('newPassword', PasswordType::class, [
+                'label' => 'New password',
+                'required' => false,
+                'mapped' => false,
+            ])
+            ->add('confirmPassword', PasswordType::class, [
+                'label' => 'Confirm new password',
+                'required' => false,
+                'mapped' => false,
+            ])
+        ;
+
+        // Show 2FA fields only when allowed by controller/options
+        if ($options['enable_2fa_field']) {
+            $builder->add('enable2FA', CheckboxType::class, [
+                'label' => 'Enable two-factor authentication (2FA)',
+                'required' => false,
+            ]);
+
+            $builder->add('confirm2FACode', TextType::class, [
+                'label' => 'Enter your 2FA code',
+                'required' => false,
+                'mapped' => false,
+            ]);
+        }
+
+        $builder->addEventListener(FormEvents::POST_SUBMIT, function (FormEvent $event) use ($options): void {
+            $form = $event->getForm();
+            $user = $form->getConfig()->getOption('user');
+
+            if (!$user instanceof User) {
+                return;
+            }
+
+            $currentPassword = $form->get('currentPassword')->getData();
+            $newPassword = $form->get('newPassword')->getData();
+            $confirmPassword = $form->get('confirmPassword')->getData();
+            $enable2FA = $form->has('enable2FA')
+                ? (bool) $form->get('enable2FA')->getData()
+                : false;
+            $code = $form->has('confirm2FACode')
+                ? $form->get('confirm2FACode')->getData()
+                : null;
+            $passwordHasher = $form->getConfig()->getOption('password_hasher');
+            $checkPasswordRequirements = 'true' === api_get_setting('security.check_password', true);
+
+            // Validate current password and confirmation if user wants to update password
+            if (!empty($newPassword)) {
+                if (empty($currentPassword)) {
+                    $form->get('currentPassword')->addError(new FormError('Current password is required to change your password.'));
+                } elseif ($passwordHasher && !$passwordHasher->isPasswordValid($user, $currentPassword)) {
+                    $form->get('currentPassword')->addError(new FormError('The current password is incorrect.'));
+                }
+
+                if ($checkPasswordRequirements) {
+                    foreach (self::validatePassword($newPassword) as $error) {
+                        $form->get('newPassword')->addError(new FormError($error));
+                    }
+                }
+
+                if (!empty($confirmPassword) && $newPassword !== $confirmPassword) {
+                    $form->get('confirmPassword')->addError(new FormError('Passwords do not match.'));
+                }
+            }
+
+            // Guard 2FA validation behind the global toggle AND presence of the field
+            if (true === $options['global_2fa_enabled'] && $form->has('confirm2FACode')) {
+                if ($user->getMfaEnabled() || $enable2FA) {
+                    if (empty($code)) {
+                        $form->get('confirm2FACode')->addError(new FormError('The 2FA code is required.'));
+                    } elseif ($user->getMfaSecret()) {
+                        // Decrypt the stored MFA secret (supports both v2 and legacy formats).
+                        $appSecret = (string) ($_ENV['APP_SECRET'] ?? '');
+                        $decryptedSecret = $this->decryptTOTPSecret((string) $user->getMfaSecret(), $appSecret);
+
+                        if ('' === $decryptedSecret) {
+                            $form->get('confirm2FACode')->addError(new FormError('Invalid 2FA configuration.'));
+
+                            return;
+                        }
+
+                        $totp = TOTP::create($decryptedSecret);
+                        $portal = $options['portal_name'] ?? 'Chamilo';
+                        $totp->setLabel($portal.' - '.$user->getEmail());
+
+                        if (!$totp->verify((string) $code)) {
+                            $form->get('confirm2FACode')->addError(new FormError('The 2FA code is invalid or expired.'));
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    public function configureOptions(OptionsResolver $resolver): void
+    {
+        $resolver->setDefaults([
+            'csrf_protection' => true,
+            'csrf_field_name' => '_token',
+            'csrf_token_id' => 'change_password',
+            'enable_2fa_field' => true,
+            'global_2fa_enabled' => true,
+            'user' => null,
+            'portal_name' => 'Chamilo',
+            'password_hasher' => null,
+        ]);
+    }
+
+    /**
+     * Derive a dedicated 32-byte encryption key for MFA secrets via HKDF.
+     * This avoids using APP_SECRET directly as an OpenSSL key for new secrets.
+     */
+    private function deriveMfaKey(string $baseKey): string
+    {
+        $baseKey = (string) $baseKey;
+        if ('' === $baseKey) {
+            return '';
+        }
+
+        // 32 bytes for AES-256 key length.
+        return hash_hkdf('sha256', $baseKey, 32, 'chamilo:mfa:totp-secret:v1');
+    }
+
+    /**
+     * Decrypts the stored TOTP secret.
+     *
+     * Supports:
+     * - v2 format (HKDF-derived key): v2:<base64(iv + ciphertext_raw)>
+     * - legacy format (APP_SECRET used directly): base64(iv.'::'.$encryptedSecret)
+     */
+    private function decryptTOTPSecret(string $encryptedSecret, string $encryptionKey): string
+    {
+        $cipherMethod = 'aes-256-cbc';
+
+        $encryptedSecret = (string) $encryptedSecret;
+        if ('' === $encryptedSecret) {
+            return '';
+        }
+
+        // v2 format (preferred): v2:<base64(iv + ciphertext_raw)>
+        if (str_starts_with($encryptedSecret, self::MFA_SECRET_V2_PREFIX)) {
+            $payload = base64_decode(substr($encryptedSecret, \strlen(self::MFA_SECRET_V2_PREFIX)), true);
+            if (false === $payload) {
+                return '';
+            }
+
+            $ivLen = openssl_cipher_iv_length($cipherMethod);
+            if (\strlen($payload) <= $ivLen) {
+                return '';
+            }
+
+            $iv = substr($payload, 0, $ivLen);
+            $ciphertextRaw = substr($payload, $ivLen);
+
+            $derivedKey = $this->deriveMfaKey($encryptionKey);
+            if ('' === $derivedKey) {
+                return '';
+            }
+
+            $pt = openssl_decrypt($ciphertextRaw, $cipherMethod, $derivedKey, OPENSSL_RAW_DATA, $iv);
+
+            return false === $pt ? '' : (string) $pt;
+        }
+
+        // Legacy format: base64(iv.'::'.$encryptedSecret)
+        $decoded = base64_decode($encryptedSecret, true);
+        if (false === $decoded) {
+            return '';
+        }
+
+        $parts = explode('::', $decoded, 2);
+        if (2 !== \count($parts)) {
+            return '';
+        }
+
+        [$iv, $encryptedData] = $parts;
+
+        $pt = openssl_decrypt((string) $encryptedData, $cipherMethod, (string) $encryptionKey, 0, (string) $iv);
+
+        return false === $pt ? '' : (string) $pt;
+    }
+
+    /**
+     * Validate password against security rules defined in settings.
+     */
+    private static function validatePassword(string $password): array
+    {
+        $errors = [];
+        $req = Security::getPasswordRequirements()['min'];
+
+        $len = \strlen($password);
+        $lower = preg_match_all('/[a-z]/', $password);
+        $upper = preg_match_all('/[A-Z]/', $password);
+        $digits = preg_match_all('/\d/', $password);
+        $specials = preg_match_all('/[^a-zA-Z0-9]/', $password);
+
+        if ($len < $req['length']) {
+            $errors[] = 'Password must be at least '.$req['length'].' characters long.';
+        }
+        if ($req['lowercase'] > 0 && $lower < $req['lowercase']) {
+            $errors[] = 'Password must contain at least '.$req['lowercase'].' lowercase character(s).';
+        }
+        if ($req['uppercase'] > 0 && $upper < $req['uppercase']) {
+            $errors[] = 'Password must contain at least '.$req['uppercase'].' uppercase character(s).';
+        }
+        if ($req['numeric'] > 0 && $digits < $req['numeric']) {
+            $errors[] = 'Password must contain at least '.$req['numeric'].' numeric character(s).';
+        }
+        if ($req['specials'] > 0 && $specials < $req['specials']) {
+            $errors[] = 'Password must contain at least '.$req['specials'].' special character(s).';
+        }
+
+        return $errors;
+    }
+}

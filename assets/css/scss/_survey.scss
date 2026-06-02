@@ -1,0 +1,268 @@
+.ch-survey-report {
+  // ---- design tokens (tweak freely) ----
+  $border: #e5e7eb;
+  $bg-soft: #f9fafb;
+  $bg-muted: #f3f4f6;
+  $text: #111827;
+  $shadow: 0 1px 2px rgba(0, 0, 0, .04);
+
+  // ---- card ----
+  .sr-card {
+    border: 1px solid $border;
+    border-radius: 12px;
+    box-shadow: $shadow;
+    margin-bottom: 18px;
+
+    &__header {
+      padding: 12px 16px;
+      font-weight: 700;
+      background: $bg-soft;
+      border-bottom: 1px solid $border;
+    }
+    &__body {
+      padding: 12px 16px;
+    }
+  }
+
+  // ---- compact table look used in the survey summary (#pdf_table) ----
+  .sr-summary-table {
+    margin: 0;
+    border-radius: 10px;
+    overflow: hidden;
+
+    th,
+    td {
+      border-color: $border;
+      color: $text;
+      @apply bg-white;
+    }
+
+    th[scope="row"] {
+      width: 260px;
+      white-space: nowrap;
+      background: $bg-muted; // subtle contrast for labels
+      font-weight: 600;
+      vertical-align: middle;
+    }
+
+    tr + tr {
+      th,
+      td {
+        border-top: 1px solid $border;
+      }
+    }
+  }
+
+  // ---- generic “block” spacing helpers used in question sections ----
+  .sr-block {
+    margin-top: 10px;
+  }
+
+  // ---- optional: progress bar style used inside the “Graphic” column ----
+  .sr-progress {
+    // outer track
+    background: #eef2ff;
+    border: 1px solid #c7d2fe;
+    height: 10px;
+    position: relative;
+    border-radius: 4px;
+    overflow: hidden;
+
+    // inner fill
+    &__fill {
+      height: 100%;
+      width: 0; // set inline (e.g., style="width:66%")
+      background: #93c5fd;
+    }
+  }
+
+  // ---- spacing for the number pagination row (if present) ----
+  #question_report_questionnumbers {
+    margin: 10px 0 16px;
+    @apply flex;
+    gap: 6px;
+
+    li {
+      list-style: none;
+
+      a {
+        @apply block;
+        padding: 6px 10px;
+        border: 1px solid $border;
+        border-radius: 8px;
+        @apply bg-white;
+        color: $text;
+        text-decoration: none;
+
+        &:hover { background: $bg-soft; }
+      }
+
+      &.disabled a {
+        opacity: .6;
+        pointer-events: none;
+      }
+    }
+  }
+}
+
+form#question-survey {
+  @apply block m-0 box-border;
+}
+
+form#question-survey .survey_question {
+  @apply block m-0 box-border;
+  width: 100% !important;
+  margin-bottom: 1rem !important;
+  clear: both;
+}
+
+/* Question label / question text */
+form#question-survey .survey_question .question-text,
+form#question-survey .survey_question > label,
+form#question-survey .survey_question .control-label {
+  @apply block;
+  margin-bottom: .4rem;
+  font-weight: 600;
+  color: #111827;
+}
+
+/* Options container: horizontal alignment + enf of line if necessary */
+form#question-survey .survey_question .options {
+  display: flex !important;
+  flex-wrap: wrap;
+  gap: .5rem;
+  @apply items-center;
+  margin-top: .25rem;
+}
+
+/* Radios inline vs vertical */
+form#question-survey .survey_question .radio-inline {
+  display: inline-flex;
+  @apply items-center;
+  gap: .35rem;
+  margin-right: .6rem;
+}
+
+.survey_question .field {
+  @apply flex flex-col gap-3 w-full;
+}
+
+.survey_question .radio-inline {
+  @apply flex items-center gap-3 mb-2;
+}
+
+.survey_question .p-radiobutton {
+  @apply relative flex items-center justify-center w-5 h-5;
+}
+
+.survey_question .p-radiobutton-box {
+  @apply w-5 h-5 border border-gray-50 rounded-full flex items-center justify-center bg-white transition-all duration-150 ease-in-out;
+}
+
+.survey_question .p-radiobutton-input {
+  @apply absolute opacity-0 cursor-pointer inset-0 w-full h-full;
+}
+
+.survey_question .p-radiobutton-checked .p-radiobutton-box {
+  @apply border-primary bg-primary;
+}
+
+.survey_question .p-radiobutton-icon {
+  @apply w-2 h-2 bg-white rounded-full hidden;
+}
+
+.survey_question .p-radiobutton-checked .p-radiobutton-icon {
+  @apply block;
+}
+
+.survey_question .radio-inline label {
+  @apply flex items-center text-gray-90 text-base font-normal cursor-pointer select-none;
+}
+
+.survey_question .radio-inline label p {
+  @apply m-0 leading-tight;
+}
+
+.survey_question .checkbox-inline {
+  @apply flex items-center gap-3 mb-2;
+}
+
+.survey_question .p-checkbox {
+  @apply relative flex items-center justify-center w-5 h-5;
+}
+
+.survey_question .p-checkbox-box {
+  @apply w-5 h-5 border border-gray-50 rounded-md flex items-center justify-center bg-white transition-all duration-150 ease-in-out;
+}
+
+.survey_question .p-checkbox-input {
+  @apply absolute opacity-0 cursor-pointer inset-0 w-full h-full;
+}
+
+.survey_question .p-checkbox-icon {
+  @apply w-3 h-3 text-white hidden;
+}
+
+.survey_question .p-checkbox-input:checked + .p-checkbox-box {
+  @apply border-primary bg-primary;
+}
+
+.survey_question .p-checkbox-input:checked + .p-checkbox-box .p-icon {
+  @apply block;
+}
+
+.survey_question .checkbox-inline label {
+  @apply flex items-center text-gray-90 text-base font-normal cursor-pointer select-none;
+}
+
+.survey_question .checkbox-inline label p {
+  @apply m-0 leading-tight;
+}
+
+/*
+ * Survey answer layout is per question.
+ * Questions must always be stacked vertically. The display setting only affects
+ * the answer options inside each question.
+ */
+form#question,
+form#question-survey {
+  .survey_question {
+    @apply block w-full;
+  }
+
+  .survey-answer-options {
+    > .field > label:first-child {
+      @apply hidden;
+    }
+
+    .radio-inline,
+    .radio-vertical,
+    .checkbox-inline,
+    .checkbox-vertical {
+      @apply inline-flex flex-row items-center gap-1.5 m-0 w-auto;
+    }
+
+    .radio-inline p,
+    .radio-vertical p,
+    .checkbox-inline p,
+    .checkbox-vertical p {
+      @apply m-0;
+    }
+  }
+
+  .survey-answer-options-horizontal {
+    @apply flex flex-row flex-wrap items-center gap-x-5 gap-y-2;
+
+    > .field {
+      @apply flex flex-row flex-wrap items-center gap-3 m-0 w-auto max-w-none;
+    }
+  }
+
+  .survey-answer-options-vertical {
+    @apply flex flex-col items-start gap-2;
+
+    > .field {
+      @apply flex flex-col flex-nowrap items-start gap-2 m-0 w-full max-w-full;
+    }
+  }
+}

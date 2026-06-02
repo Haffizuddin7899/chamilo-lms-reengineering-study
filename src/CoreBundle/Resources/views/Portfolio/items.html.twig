@@ -1,0 +1,159 @@
+{% macro display(items, category_id, _c, user, listByUser) %}
+    {% set edit_img = 'ActionIcon::EDIT'|mdi_icon_t(22, 'ch-tool-icon', 'Edit') %}
+    {% set visible_img = 'ActionIcon::VISIBLE'|mdi_icon_t(22, 'ch-tool-icon', 'Invisible') %}
+    {% set invisible_img = 'ActionIcon::INVISIBLE'|mdi_icon_t(22, 'ch-tool-icon', 'Visible') %}
+    {% set delete_img = 'ActionIcon::DELETE'|mdi_icon_t(22, 'ch-tool-icon', 'Delete') %}
+    {% set baseurl = '/main/portfolio/index.php' ~ '?' ~ (app.request.queryString ? app.request.queryString ~ '&' : '') %}
+    {% set is_advanced_sharing_enabled = 'platform.portfolio_advanced_sharing'|api_get_setting and not _c is empty %}
+
+    <section class="portfolio-items">
+        {% for item in items %}
+            {% if listByUser %}
+                {% set item_url = baseurl ~ {'action':'view', 'id':item.id, 'user':user.id}|url_encode %}
+            {% else %}
+                {% set item_url = baseurl ~ {'action':'view', 'id':item.id}|url_encode %}
+            {% endif %}
+            {% set comments = item.lastComments(3, is_advanced_sharing_enabled) %}
+
+            {% if 'platform.portfolio_show_base_course_post_in_sessions'|api_get_setting %}
+                {% if _c.session_id and not item.session and not item.isDuplicatedInSessionId(_c.session_id) %}
+                    {% set comments = {} %}
+                {% endif %}
+            {% endif %}
+
+            <div class="panel panel-default">
+                <article class="panel-body portfolio-item" id="portfolio-item-{{ item.id }}">
+                    <div class="portfolio-actions pull-right">
+                        {% if app.user.id == item.resourceNode.creator.id %}
+                            <a href="{{ baseurl ~ {'action':'edit_item', 'id':item.id}|url_encode }}">
+                                {{ 'ActionIcon::EDIT'|mdi_icon_t(22, 'ch-tool-icon', 'Edit') }}
+                            </a>
+
+                            {% if is_advanced_sharing_enabled %}
+                                <a href="{{ baseurl ~ {'action':'item_visiblity_choose', 'id':item.id}|url_encode }}">
+                                    {{ 'ActionIcon::VISIBLE'|mdi_icon_t(22, 'ch-tool-icon', 'Choose recipients') }}
+                                </a>
+                            {% else %}
+                                {% if item.visibility == 0 %}
+                                    <a href="{{ baseurl ~ {'action':'visibility', 'id':item.id}|url_encode }}">
+                                        {{ 'ActionIcon::INVISIBLE'|mdi_icon_t(22, 'ch-tool-icon', 'Make visible') }}
+                                    </a>
+                                {% elseif item.visibility == 1 %}
+                                    <a href="{{ baseurl ~ {'action':'visibility', 'id':item.id}|url_encode }}">
+                                        {{ 'ActionIcon::VISIBLE'|mdi_icon_t(22, 'ch-tool-icon', 'Make visible for teachers') }}
+                                    </a>
+                                {% elseif item.visibility == 2 %}
+                                    <a href="{{ baseurl ~ {'action':'visibility', 'id':item.id}|url_encode }}">
+                                        {{ 'StateIcon::CLOSED_VISIBILITY'|mdi_icon_t(22, 'ch-tool-icon', 'Make invisible') }}
+                                    </a>
+                                {% endif %}
+                            {% endif %}
+
+                            <a href="{{ baseurl ~ {'action':'delete_item', 'id':item.id}|url_encode }}" class="btn-delete">
+                                {{ 'ActionIcon::DELETE'|mdi_icon_t(22, 'ch-tool-icon', 'Delete') }}
+                            </a>
+                        {% elseif is_allowed_to_edit() %}
+                            <a href="{{ baseurl ~ {'action':'edit_item', 'id':item.id}|url_encode }}">
+                                {{ 'ActionIcon::EDIT'|mdi_icon_t(22, 'ch-tool-icon', 'Edit') }}
+                            </a>
+                        {% endif %}
+
+                        {% if is_allowed_to_edit() %}
+                            {% if item.isHighlighted %}
+                                <a href="{{ baseurl ~ {'action':'highlighted', 'id':item.id}|url_encode }}">
+                                    {{ 'award_red.png'|icon(22, 'Unmark as highlighted'|get_lang) }}
+                                </a>
+                            {% else %}
+                                <a href="{{ baseurl ~ {'action':'highlighted', 'id':item.id}|url_encode }}">
+                                    {{ 'ActionIcon::AWARD'|mdi_icon_t(22, 'ch-tool-icon', 'Mark as highlighted'|get_lang) }}
+                                </a>
+                            {% endif %}
+                        {% endif %}
+                    </div>
+
+                    {% if item.isHighlighted %}
+                        <span class="label label-success">
+                            {{ 'ActionIcon::STAR'|mdi_icon(22) }}
+                            {{ 'Highlighted'|get_lang }}
+                        </span>
+                    {% endif %}
+
+                    <header>
+                        <h3>
+                            <a href="{{ item_url }}">{{ item.title|remove_xss }}</a>
+                        </h3>
+
+                        <ul class="fa-ul list-inline">
+                            {% if _c is empty %}
+                                {% if item.session %}
+                                    <li>
+                                        <span class="fa-li fa fa-book" aria-hidden="true"></span>
+                                        {{ 'Course'|get_lang ~ ': ' ~ item.session.name ~ ' (' ~ item.course.title ~ ')' }}
+                                    </li>
+                                {% elseif not item.session and item.course %}
+                                    <li>
+                                        <span class="fa-li fa fa-book" aria-hidden="true"></span>
+                                        {{ 'Course'|get_lang ~ ': ' ~ item.course.title }}
+                                    </li>
+                                {% endif %}
+                            {% else %}
+                                <li>
+                                    <span class="fa-li fa fa-user" aria-hidden="true"></span>
+                                    {{ item.resourceNode.creator.fullName }}
+                                </li>
+                            {% endif %}
+
+                            <li>
+                                <span class="fa-li fa fa-clock-o" aria-hidden="true"></span>
+                                {{ 'Creation date'|get_lang ~ ': ' }}
+                                {{ item.resourceNode.createdAt|date_to_time_ago }}
+                            </li>
+
+                            {% if item.resourceNode.createdAt != item.resourceNode.updatedAt %}
+                                <li>
+                                    <span class="fa-li fa fa-clock-o" aria-hidden="true"></span>
+                                    {{ 'Update date'|get_lang ~ ': ' }}
+                                    {{ item.resourceNode.updatedAt|date_to_time_ago }}
+                                </li>
+                            {% endif %}
+                        </ul>
+                    </header>
+
+                    <hr>
+
+                    <p>{{ item.excerpt }}</p>
+
+                    <hr>
+
+                    <section>
+                        {% if comments|length > 0 %}
+                            <h4>
+                                <a href="{{ item_url }}#portfolio-item-comments">
+                                    {{ '%s comments'|get_lang|format(comments|length) }}
+                                </a>
+                                &centerdot;
+                                <a href="{{ item_url }}#frm_comment">{{ 'Add new comment'|get_lang }}</a>
+                            </h4>
+                            {% for comment in comments %}
+                                <article>
+                                    <footer>
+                                        {{ 'ToolIcon::FORUM'|mdi_icon(22) }}
+                                        <strong>{{ comment.resourceNode.creator.fullName }}</strong>
+                                        <small class="fa fa-clock-o fa-fw text-muted" aria-hidden="true"></small>
+                                        <small class="text-muted">{{ comment.date|date_to_time_ago }}</small>
+                                    </footer>
+                                    <p>{{ comment.excerpt }}</p>
+                                </article>
+                            {% endfor %}
+                        {% else %}
+                            <a href="{{ item_url }}#portfolio-item-comments">
+                                {{ 'ActionIcon::COMMENT'|mdi_icon(22) }}
+                                {{ 'Add new comment'|get_lang }}
+                            </a>
+                        {% endif %}
+                    </section>
+                </article>
+            </div>
+        {% endfor %}
+    </section>
+{% endmacro %}

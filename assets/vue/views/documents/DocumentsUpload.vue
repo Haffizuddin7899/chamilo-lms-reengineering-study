@@ -1,0 +1,771 @@
+<template>
+  <BaseToolbar>
+    <BaseButton
+      :label="t('Back')"
+      icon="back"
+      type="black"
+      @click="back"
+    />
+  </BaseToolbar>
+
+  <div class="flex flex-col justify-start">
+    <!-- Quota warning banner (visible when threshold is reached) -->
+    <div
+      v-if="quotaWarningMessage"
+      class="mb-4 rounded border border-yellow-200 bg-yellow-50 px-4 py-3 text-sm text-yellow-900"
+      role="alert"
+    >
+      {{ quotaWarningMessage }}
+    </div>
+
+    <div class="mb-4">
+      <Dashboard
+        :plugins="['Webcam', 'ImageEditor']"
+        :props="{
+          proudlyDisplayPoweredByUppy: false,
+          width: '100%',
+          height: '350px',
+        }"
+        :uppy="uppy"
+      />
+    </div>
+    <div class="mb-4 rounded-lg border border-gray-25 bg-white p-4">
+      <div class="mb-3 flex items-center justify-between gap-4">
+        <div>
+          <h2 class="text-base font-semibold text-gray-90">
+            {{ t("Cloud link") }}
+          </h2>
+          <p class="text-sm text-gray-50">
+            {{ t("Add a link to a cloud document, such as Google Drive or Google Docs.") }}
+          </p>
+        </div>
+
+        <button
+          type="button"
+          class="inline-flex items-center gap-2 rounded-md border border-primary px-3 py-2 text-sm font-semibold text-primary hover:bg-primary hover:text-white"
+          @click="isCloudLinkFormVisible = !isCloudLinkFormVisible"
+        >
+          <span
+            class="mdi mdi-link-variant"
+            aria-hidden="true"
+          />
+          {{ isCloudLinkFormVisible ? t("Cancel") : t("Add cloud link") }}
+        </button>
+      </div>
+
+      <form
+        v-if="isCloudLinkFormVisible"
+        class="grid gap-4 md:grid-cols-[1fr_2fr_auto]"
+        @submit.prevent="saveCloudLink"
+      >
+        <div class="flex flex-col gap-1">
+          <label
+            for="cloud_link_title"
+            class="text-sm font-semibold text-gray-70"
+          >
+            {{ t("Title") }}
+          </label>
+          <input
+            id="cloud_link_title"
+            v-model.trim="cloudLinkTitle"
+            name="cloud_link_title"
+            type="text"
+            class="rounded-md border border-gray-25 px-3 py-2 text-sm"
+            :placeholder="t('Document title')"
+            required
+          />
+        </div>
+
+        <div class="flex flex-col gap-1">
+          <label
+            for="cloud_link_url"
+            class="text-sm font-semibold text-gray-70"
+          >
+            {{ t("URL") }}
+          </label>
+          <input
+            id="cloud_link_url"
+            v-model.trim="cloudLinkUrl"
+            name="cloud_link_url"
+            type="url"
+            class="rounded-md border border-gray-25 px-3 py-2 text-sm"
+            placeholder="https://docs.google.com/..."
+            required
+          />
+        </div>
+
+        <div class="flex items-end">
+          <button
+            type="submit"
+            class="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-semibold text-white hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
+            :disabled="isSavingCloudLink"
+          >
+            <span
+              class="mdi mdi-content-save"
+              aria-hidden="true"
+            />
+            {{ isSavingCloudLink ? t("Saving...") : t("Save") }}
+          </button>
+        </div>
+
+        <div
+          v-if="cloudLinkError"
+          class="md:col-span-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700"
+          role="alert"
+        >
+          {{ cloudLinkError }}
+        </div>
+      </form>
+    </div>
+
+    <BaseAdvancedSettingsButton v-model="showAdvancedSettings">
+      <ResourceLanguageSelector v-model="selectedLanguage" />
+      <div class="mb-2 flex flex-col gap-2 sm:flex-row sm:items-center">
+        <div class="flex w-28 shrink-0 items-center gap-1 font-semibold">
+          <span>{{ t("Options") }}:</span>
+          <span
+            class="mdi mdi-information-outline cursor-help text-primary"
+            aria-hidden="true"
+            :title="t('Document options change how uploaded files are processed after saving.')"
+          />
+        </div>
+
+        <div class="flex items-center gap-2">
+          <BaseCheckbox
+            id="uncompress"
+            v-model="isUncompressZipEnabled"
+            :label="t('Uncompress zip')"
+            name="uncompress"
+          />
+
+          <span
+            class="mdi mdi-information-outline cursor-help text-primary"
+            role="img"
+            tabindex="0"
+            :aria-label="t('Information about uncompressing zip files')"
+            :title="t('When enabled, ZIP files are extracted into the current document folder after upload.')"
+          />
+        </div>
+      </div>
+
+      <div class="flex flex-row mb-2">
+        <label class="font-semibold w-28">{{ t("If file exists") }}:</label>
+        <BaseRadioButtons
+          id="fileExistsOption"
+          v-model="fileExistsOption"
+          :initial-value="'rename'"
+          :options="[
+            { label: t('Do nothing'), value: 'nothing' },
+            { label: t('Overwrite the existing file'), value: 'overwrite' },
+            { label: t('Rename the uploaded file if it exists'), value: 'rename' },
+          ]"
+          name="fileExistsOption"
+        />
+      </div>
+
+      <!-- Search / Xapian options -->
+      <div
+        v-if="isSearchEnabled"
+        class="mb-2 flex flex-col gap-2 sm:flex-row sm:items-center"
+      >
+        <label class="w-28 shrink-0 font-semibold">{{ t("Search") }}:</label>
+
+        <div class="flex items-center gap-2">
+          <BaseCheckbox
+            id="indexDocumentContent"
+            v-model="indexDocumentContent"
+            :label="t('Index document content?')"
+            name="indexDocumentContent"
+          />
+
+          <span
+            class="mdi mdi-information-outline cursor-help text-primary"
+            role="img"
+            tabindex="0"
+            :aria-label="t('Information about indexing document content')"
+            :title="t('When enabled, the document text is indexed by the search engine so users can find it from platform search.')"
+          />
+        </div>
+      </div>
+
+      <!-- Specific search fields -->
+      <div
+        v-if="isSearchEnabled && searchFields.length > 0"
+        class="flex flex-col gap-2 mt-3"
+      >
+        <div
+          v-for="field in searchFields"
+          :key="field.id"
+          class="flex flex-row items-center gap-3"
+        >
+          <label
+            class="font-semibold w-28"
+            :for="`upload_search_field_${field.code}`"
+          >
+            {{ field.title }}:
+          </label>
+
+          <input
+            :id="`upload_search_field_${field.code}`"
+            :name="`searchFieldValues[${field.code}]`"
+            v-model="searchFieldValues[field.code]"
+            type="text"
+            class="w-full border border-gray-300 rounded px-3 py-2"
+            :placeholder="field.title"
+            autocomplete="off"
+          />
+        </div>
+      </div>
+    </BaseAdvancedSettingsButton>
+  </div>
+</template>
+
+<script setup>
+import { computed, ref, watch, onBeforeUnmount, onMounted } from "vue"
+import "@uppy/core/dist/style.css"
+import "@uppy/dashboard/dist/style.css"
+import "@uppy/image-editor/dist/style.css"
+
+import Uppy from "@uppy/core"
+import Webcam from "@uppy/webcam"
+import { Dashboard } from "@uppy/vue"
+import XHRUpload from "@uppy/xhr-upload"
+import ImageEditor from "@uppy/image-editor"
+import { useRoute, useRouter } from "vue-router"
+import { RESOURCE_LINK_PUBLISHED } from "../../constants/entity/resourcelink"
+import { getCourseContext } from "../../utils/courseContext"
+import { useUpload } from "../../composables/upload"
+import { useI18n } from "vue-i18n"
+import BaseCheckbox from "../../components/basecomponents/BaseCheckbox.vue"
+import BaseRadioButtons from "../../components/basecomponents/BaseRadioButtons.vue"
+import BaseAdvancedSettingsButton from "../../components/basecomponents/BaseAdvancedSettingsButton.vue"
+import BaseButton from "../../components/basecomponents/BaseButton.vue"
+import BaseToolbar from "../../components/basecomponents/BaseToolbar.vue"
+import ResourceLanguageSelector from "../../components/resources/ResourceLanguageSelector.vue"
+import { usePlatformConfig } from "../../store/platformConfig"
+import documentsService from "../../services/documents"
+import searchEngineFieldService from "../../services/searchEngineFieldService"
+
+const route = useRoute()
+const router = useRouter()
+const { gid, sid, cid } = getCourseContext()
+const { onCreated } = useUpload()
+const { t } = useI18n()
+const platformConfigStore = usePlatformConfig()
+
+const LOW_QUOTA_THRESHOLD_PERCENT = 2
+const QUOTA_STALE_MS = 30_000
+
+function normalizePickerType(raw) {
+  const value = String(raw || "")
+    .trim()
+    .toLowerCase()
+
+  if (value === "image" || value === "images") return "image"
+  if (value === "media" || value === "video" || value === "audio") return "media"
+  if (value === "certificate") return "certificate"
+
+  return "file"
+}
+
+function pickerTypeToRouteType(type) {
+  if (type === "image") return "images"
+  if (type === "media") return "media"
+  return "files"
+}
+
+function resolveUploadFiletype(raw, pickerType) {
+  const value = String(raw || "")
+    .trim()
+    .toLowerCase()
+
+  if (pickerType === "certificate") {
+    return "certificate"
+  }
+
+  // Keep legacy compatibility if a caller still explicitly uses "video".
+  if (value === "video") {
+    return "video"
+  }
+
+  return "file"
+}
+
+function getAllowedFileTypes(pickerType) {
+  if (pickerType === "image") {
+    return ["image/*"]
+  }
+
+  if (pickerType === "media") {
+    return ["video/*", "audio/*"]
+  }
+
+  if (pickerType === "certificate") {
+    return [".html"]
+  }
+
+  return null
+}
+
+function buildReturnQuery(overrides = {}) {
+  return {
+    ...route.query,
+    type: pickerTypeToRouteType(pickerType),
+    ...overrides,
+  }
+}
+
+const requestedType = String(route.query.type || route.query.filetype || "file")
+const pickerType = normalizePickerType(requestedType)
+const filetype = resolveUploadFiletype(requestedType, pickerType)
+
+const showAdvancedSettings = ref(false)
+const isUncompressZipEnabled = ref(false)
+const fileExistsOption = ref("rename")
+
+const isSearchEnabled = computed(() => "false" !== platformConfigStore.getSetting("search.search_enabled"))
+const indexDocumentContent = ref(isSearchEnabled.value)
+
+// Search fields: [{id, code, title}]
+const searchFields = ref([])
+const searchFieldValues = ref({})
+
+const parentResourceNodeId = ref(Number(route.query.parentResourceNodeId || route.params.node))
+const isCloudLinkFormVisible = ref(false)
+const cloudLinkTitle = ref("")
+const cloudLinkUrl = ref("")
+const cloudLinkError = ref("")
+const isSavingCloudLink = ref(false)
+const selectedLanguage = ref("")
+
+// Banner warning
+const quotaWarningMessage = ref("")
+
+// Latest quota info (stored for client-side validation).
+const quotaInfo = ref({
+  availableBytes: null,
+  availablePercent: null,
+  fetchedAt: 0,
+})
+
+function normalizeCode(code) {
+  return String(code || "")
+    .trim()
+    .toLowerCase()
+}
+
+function normalizeLanguageIso(value) {
+  const raw = String(value || "").trim()
+  if (!raw) {
+    return ""
+  }
+
+  const languages = Array.isArray(window.languages) ? window.languages : []
+  const iriMatch = raw.match(/\/api\/languages\/(\d+)/)
+  if (iriMatch) {
+    const byId = languages.find((language) => String(language?.id || "") === iriMatch[1])
+    return String(byId?.isocode || byId?.isoCode || "")
+  }
+
+  const normalizedRaw = raw.replace("-", "_").toLowerCase()
+  const exact = languages.find((language) => {
+    const code = String(language?.isocode || language?.isoCode || "")
+      .replace("-", "_")
+      .toLowerCase()
+
+    return code === normalizedRaw
+  })
+
+  if (exact) {
+    return String(exact.isocode || exact.isoCode || "")
+  }
+
+  const shortCode = normalizedRaw.split("_")[0]
+  const byShortCode = languages.find((language) => {
+    const code = String(language?.isocode || language?.isoCode || "")
+      .replace("-", "_")
+      .toLowerCase()
+
+    return code === shortCode || code.startsWith(`${shortCode}_`)
+  })
+
+  return String(byShortCode?.isocode || byShortCode?.isoCode || raw)
+}
+
+async function applyDefaultLanguageFromCourse() {
+  if (selectedLanguage.value) {
+    return
+  }
+
+  const queryLanguage = normalizeLanguageIso(route.query.course_language)
+  if (queryLanguage) {
+    selectedLanguage.value = queryLanguage
+    return
+  }
+
+  const courseId = cid
+  if (!courseId) {
+    return
+  }
+
+  try {
+    const response = await fetch(`/api/courses/${courseId}`, {
+      credentials: "same-origin",
+      headers: { Accept: "application/json" },
+    })
+
+    if (!response.ok) {
+      return
+    }
+
+    const data = await response.json()
+    const courseLanguage = normalizeLanguageIso(data?.courseLanguage || data?.course_language || data?.language)
+
+    if (courseLanguage && !selectedLanguage.value) {
+      selectedLanguage.value = courseLanguage
+    }
+  } catch (error) {
+    console.warn("[DocumentsUpload] Failed to load course language.", error)
+  }
+}
+
+// Build meta keys: { "searchFieldValues[t]": "...", "searchFieldValues[d]": "..." }
+function buildSearchFieldMeta(values, fields) {
+  const meta = {}
+  for (const f of fields || []) {
+    const code = normalizeCode(f.code)
+    if (!code) continue
+    meta[`searchFieldValues[${code}]`] = String(values?.[code] ?? "")
+  }
+  return meta
+}
+
+// The course context (cid/sid/gid) is derived server-side from the gated
+// session course, so the link list only needs to carry the visibility.
+function buildResourceLinkList() {
+  return JSON.stringify([{ visibility: RESOURCE_LINK_PUBLISHED }])
+}
+
+function buildResourceLinkArray() {
+  return [{ visibility: RESOURCE_LINK_PUBLISHED }]
+}
+
+async function saveCloudLink() {
+  cloudLinkError.value = ""
+
+  const title = String(cloudLinkTitle.value || "").trim()
+  const url = String(cloudLinkUrl.value || "").trim()
+  const parentNodeId = Number(parentResourceNodeId.value) || 0
+
+  if (!title) {
+    cloudLinkError.value = t("The title is required.")
+    return
+  }
+
+  if (!url) {
+    cloudLinkError.value = t("The URL is required.")
+    return
+  }
+
+  if (parentNodeId <= 0) {
+    cloudLinkError.value = t("The destination folder is missing.")
+    return
+  }
+
+  isSavingCloudLink.value = true
+
+  try {
+    const document = await documentsService.createCloudLink({
+      title,
+      comment: url,
+      parentResourceNodeId: parentNodeId,
+      resourceLinkList: buildResourceLinkArray(),
+      language: selectedLanguage.value,
+    })
+
+    onCreated(document)
+
+    localStorage.setItem("isUploaded", "true")
+    localStorage.setItem("uploadParentNodeId", parentNodeId)
+
+    cloudLinkTitle.value = ""
+    cloudLinkUrl.value = ""
+    isCloudLinkFormVisible.value = false
+
+    if (route.query.returnTo) {
+      await router.push({
+        name: String(route.query.returnTo),
+        params: { node: parentNodeId },
+        query: buildReturnQuery({ parentResourceNodeId: parentNodeId }),
+      })
+
+      return
+    }
+
+    router.back()
+  } catch (error) {
+    console.error("[Documents] Failed to create cloud link.", error)
+    cloudLinkError.value = error?.message || t("Unable to create cloud link.")
+  } finally {
+    isSavingCloudLink.value = false
+  }
+}
+
+/**
+ * Refresh quota info using documentsService cache and update the banner.
+ */
+async function refreshQuota(force = false) {
+  const courseId = cid
+  if (!courseId) return null
+
+  const info = await documentsService.getQuotaUsage(courseId, {
+    sid,
+    gid,
+    force,
+    staleMs: QUOTA_STALE_MS,
+  })
+
+  quotaInfo.value = info || { availableBytes: null, availablePercent: null, fetchedAt: 0 }
+
+  const msg = documentsService.getQuotaWarningMessage(t, info, {
+    thresholdPercent: LOW_QUOTA_THRESHOLD_PERCENT,
+  })
+
+  quotaWarningMessage.value = msg
+
+  if (msg) {
+    uppy.info(msg, "warning", 9000)
+  }
+
+  return info
+}
+
+function getQueuedBytesExcluding(fileId) {
+  const files = uppy.getFiles?.() || []
+  let total = 0
+  for (const f of files) {
+    if (!f) continue
+    if (fileId && f.id === fileId) continue
+    total += Number(f.size || 0)
+  }
+  return total
+}
+
+async function enforceQuotaForFile(file) {
+  if (!file) return true
+
+  const info = await refreshQuota(false)
+  if (!info) return true
+
+  const availableBytes = Number(info.availableBytes)
+  if (!Number.isFinite(availableBytes)) return true
+
+  const alreadyQueued = getQueuedBytesExcluding(file.id)
+  const wouldUse = alreadyQueued + Number(file.size || 0)
+
+  if (availableBytes <= 0 || wouldUse > availableBytes) {
+    uppy.info(documentsService.getQuotaUploadErrorMessage(t), "error", 9000)
+    try {
+      uppy.removeFile(file.id)
+    } catch {
+      // Ignore Uppy remove errors.
+    }
+    return false
+  }
+
+  return true
+}
+
+const uppy = new Uppy({ autoProceed: false })
+  .use(Webcam)
+  .use(ImageEditor, {
+    cropperOptions: {
+      viewMode: 1,
+      background: false,
+      autoCropArea: 1,
+      responsive: true,
+    },
+    actions: {
+      revert: true,
+      rotate: true,
+      granularRotate: true,
+      flip: true,
+      zoomIn: true,
+      zoomOut: true,
+      cropSquare: true,
+      cropWidescreen: true,
+      cropWidescreenVertical: true,
+    },
+  })
+  .use(XHRUpload, {
+    // Uppy issues a raw XHR that bypasses the axios interceptor, so the course
+    // context must be appended to the URL explicitly. The backend reads it to
+    // gate the upload and to bind the document to the current course.
+    endpoint: `/api/documents?cid=${cid}&sid=${sid}&gid=${gid}`,
+    formData: true,
+    fieldName: "uploadFile",
+    getResponseError: (responseText, xhr) => {
+      const status = xhr?.status
+
+      // If server returns common quota statuses, always map to the quota message.
+      if (status === 507 || status === 413) {
+        return new Error(documentsService.getQuotaUploadErrorMessage(t))
+      }
+
+      const msg = documentsService.extractApiErrorMessageFromText(responseText)
+
+      if (documentsService.isQuotaError(status, msg)) {
+        return new Error(documentsService.getQuotaUploadErrorMessage(t))
+      }
+
+      if (!msg) {
+        return new Error(`Upload failed (HTTP ${status ?? "unknown"}).`)
+      }
+
+      return new Error(msg)
+    },
+  })
+
+uppy.on("file-added", async (file) => {
+  // Validate quota before user starts uploading.
+  await enforceQuotaForFile(file)
+})
+
+uppy
+  .on("upload-error", async (file, error) => {
+    // If Uppy shows a generic network error but quota says it doesn't fit, show the real message.
+    const info = await refreshQuota(false)
+    const availableBytes = Number(info?.availableBytes)
+
+    if (file?.size && Number.isFinite(availableBytes) && file.size > availableBytes) {
+      uppy.info(documentsService.getQuotaUploadErrorMessage(t), "error", 9000)
+      return
+    }
+
+    const msg = error?.message || "Upload failed."
+    uppy.info(msg, "error", 9000)
+  })
+  .on("upload-success", (_item, response) => {
+    onCreated(response.body)
+  })
+  .on("complete", () => {
+    const parentNodeId = parentResourceNodeId.value
+    localStorage.setItem("isUploaded", "true")
+    localStorage.setItem("uploadParentNodeId", parentNodeId)
+    setTimeout(() => {
+      if (route.query.returnTo) {
+        router.push({
+          name: String(route.query.returnTo),
+          params: { node: parentNodeId },
+          query: buildReturnQuery({ parentResourceNodeId: parentNodeId }),
+        })
+      } else {
+        router.back()
+      }
+    }, 2000)
+  })
+
+uppy.setMeta({
+  filetype,
+  parentResourceNodeId: parentResourceNodeId.value,
+  resourceLinkList: buildResourceLinkList(),
+  isUncompressZipEnabled: isUncompressZipEnabled.value,
+  fileExistsOption: fileExistsOption.value,
+  indexDocumentContent: indexDocumentContent.value,
+  language: selectedLanguage.value,
+})
+
+uppy.setOptions({
+  restrictions: {
+    allowedFileTypes: getAllowedFileTypes(pickerType),
+  },
+})
+
+onMounted(async () => {
+  await applyDefaultLanguageFromCourse()
+  await refreshQuota(true)
+
+  if (!isSearchEnabled.value) return
+
+  try {
+    const { items } = await searchEngineFieldService.listFields()
+    const fields = items || []
+    if (!Array.isArray(fields)) {
+      console.error("[Search] Unexpected search engine fields payload:", items)
+      return
+    }
+
+    searchFields.value = fields
+      .map((f) => ({
+        id: f.id,
+        code: normalizeCode(f.code),
+        title: f.title,
+      }))
+      .filter((f) => f.code)
+
+    // Ensure keys exist for v-model
+    for (const f of searchFields.value) {
+      if (undefined === searchFieldValues.value[f.code]) {
+        searchFieldValues.value[f.code] = ""
+      }
+    }
+
+    // Push meta keys: searchFieldValues[t], searchFieldValues[d], ...
+    uppy.setMeta(buildSearchFieldMeta(searchFieldValues.value, searchFields.value))
+  } catch (e) {
+    console.error("[Search] Failed to fetch search engine fields:", e)
+  }
+})
+
+watch(isUncompressZipEnabled, (value) => {
+  uppy.setMeta({ isUncompressZipEnabled: value })
+})
+
+watch(fileExistsOption, (value) => {
+  uppy.setMeta({ fileExistsOption: value })
+})
+
+watch(indexDocumentContent, (value) => {
+  uppy.setMeta({ indexDocumentContent: value })
+})
+
+watch(selectedLanguage, (value) => {
+  uppy.setMeta({ language: value })
+})
+
+watch(
+  searchFieldValues,
+  () => {
+    uppy.setMeta(buildSearchFieldMeta(searchFieldValues.value, searchFields.value))
+  },
+  { deep: true },
+)
+
+function back() {
+  const queryParams = {
+    ...buildReturnQuery(),
+    cid,
+    sid,
+    gid,
+    tab: route.query.tab,
+  }
+
+  if (route.query.tab) {
+    router.push({
+      name: "FileManagerList",
+      params: { node: parentResourceNodeId.value },
+      query: queryParams,
+    })
+  } else {
+    router.back()
+  }
+}
+
+onBeforeUnmount(() => {
+  try {
+    uppy.close()
+  } catch {
+    // Ignore Uppy closing errors.
+  }
+})
+</script>

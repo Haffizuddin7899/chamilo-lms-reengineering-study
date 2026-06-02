@@ -1,0 +1,57 @@
+.p-menu {
+  @apply bg-white px-0 py-2 border border-gray-25 rounded-lg min-w-52;
+
+  &-list {
+    @apply m-0 p-0 outline-none list-none flex flex-col gap-0;
+  }
+
+  &-item {
+    &-content {
+      @apply overflow-hidden transition-colors text-gray-90;
+    }
+
+    &-link {
+      @apply cursor-pointer flex items-center no-underline overflow-hidden relative select-none outline-none py-1 px-4 gap-1;
+    }
+
+    &-label {
+      @apply text-body-1;
+    }
+
+    &-icon {
+      @apply text-gray-90;
+    }
+
+    &.p-focus {
+      .p-menu-item-content {
+        @apply bg-gray-15 text-gray-90;
+      }
+
+      .p-menu-item-icon {
+        @apply text-gray-90;
+      }
+    }
+
+    &:not(.p-disabled) {
+      .p-menu-item-content:hover {
+        @apply text-primary bg-support-1;
+
+        .p-menu-item-icon {
+          @apply text-primary;
+        }
+      }
+    }
+  }
+
+  &-overlay {
+    @apply mt-1 border-0 rounded-lg shadow-xl;
+  }
+
+  &-submenu-label {
+    @apply p-3 text-body-1 font-semibold py-1 px-4 bg-white text-gray-90;
+  }
+
+  &-separator {
+    @apply border-t border-t-gray-25 my-1;
+  }
+}

@@ -1,0 +1,135 @@
+# To get started with security, check out the documentation:
+# http://symfony.com/doc/current/book/security.html
+security:
+    # https://symfony.com/doc/current/security.html#registering-the-user-hashing-passwords
+    password_hashers:
+        legacy_md5:
+            algorithm: md5
+            encode_as_base64: false
+            iterations: 1
+
+        legacy_sha1:
+            algorithm: sha1
+            encode_as_base64: false
+            iterations: 1
+
+        legacy_bcrypt:
+            algorithm: bcrypt
+            encode_as_base64: false
+            cost: 4
+
+        Chamilo\CoreBundle\Entity\User:
+            algorithm: auto
+            migrate_from:
+                - bcrypt
+                - legacy_md5
+                - legacy_sha1
+                - legacy_bcrypt
+
+    # http://symfony.com/doc/current/book/security.html#where-do-users-come-from-user-providers
+    providers:
+        app_user_provider:
+            entity:
+                class: Chamilo\CoreBundle\Entity\User
+                property: username
+    role_hierarchy:
+        ROLE_STUDENT: [ROLE_USER]
+        ROLE_ADMIN:
+            - ROLE_USER
+            - ROLE_STUDENT
+            - ROLE_TEACHER
+            - ROLE_QUESTION_MANAGER
+            - ROLE_SESSION_MANAGER
+            - ROLE_CURRENT_COURSE_TEACHER
+            - ROLE_CURRENT_COURSE_SESSION_TEACHER
+            - ROLE_CURRENT_COURSE_GROUP_TEACHER
+            - ROLE_ALLOWED_TO_SWITCH
+        ROLE_GLOBAL_ADMIN: [ROLE_ADMIN, ROLE_ALLOWED_TO_SWITCH]
+        ROLE_TEACHER: [ROLE_STUDENT]
+        ROLE_HR: [ROLE_TEACHER, ROLE_ALLOWED_TO_SWITCH]
+        ROLE_QUESTION_MANAGER: [ROLE_STUDENT]
+        ROLE_SESSION_MANAGER: [ROLE_STUDENT, ROLE_ALLOWED_TO_SWITCH]
+        ROLE_STUDENT_BOSS: [ROLE_STUDENT]
+        ROLE_INVITEE: [ROLE_STUDENT]
+        ROLE_CURRENT_COURSE_STUDENT: [ROLE_CURRENT_COURSE_STUDENT]
+        ROLE_CURRENT_COURSE_TEACHER: [ROLE_CURRENT_COURSE_TEACHER, ROLE_CURRENT_COURSE_STUDENT]
+        ROLE_CURRENT_COURSE_GROUP_STUDENT: [ROLE_CURRENT_COURSE_GROUP_STUDENT]
+        ROLE_CURRENT_COURSE_GROUP_TEACHER: [ROLE_CURRENT_COURSE_GROUP_TEACHER, ROLE_CURRENT_COURSE_GROUP_STUDENT]
+        ROLE_CURRENT_COURSE_SESSION_STUDENT: [ROLE_CURRENT_COURSE_SESSION_STUDENT]
+        ROLE_CURRENT_COURSE_SESSION_TEACHER: [ROLE_CURRENT_COURSE_SESSION_STUDENT, ROLE_CURRENT_COURSE_SESSION_TEACHER]
+        ROLE_ANONYMOUS: [ROLE_ANONYMOUS]
+    access_decision_manager:
+        # strategy can be: affirmative, unanimous or consensus
+        # only grant access if none of the voters has denied access
+        strategy: unanimous
+    firewalls:
+        # disables authentication for assets and the profiler, adapt it according to your needs
+        dev:
+            pattern: ^/(_(profiler|wdt)|css|images|js)/
+            security: false
+
+        # Use to connect via a JWT token
+        api:
+            pattern: ^/api
+#            stateless: true
+            jwt: ~
+            context: main
+            provider: app_user_provider
+            # set throttling through the rate-limit package (uses Lock for persistence, see config/packages/lock.yaml)
+            login_throttling:
+                max_attempts: 10
+                interval: '1 minute'
+            json_login:
+                check_path: /api/authentication_token
+                success_handler: lexik_jwt_authentication.handler.authentication_success
+                failure_handler: lexik_jwt_authentication.handler.authentication_failure
+#            guard:
+#                authenticators:
+#                    - lexik_jwt_authentication.jwt_token_authenticator
+
+        # Default login via json
+        main:
+            pattern: ^/
+            context: main
+            provider: app_user_provider
+            # set throttling through the rate-limit package (uses Lock for persistence, see config/packages/lock.yaml)
+            login_throttling:
+                max_attempts: 5
+                interval: '1 minute'
+            #            form_login:
+            #                csrf_token_generator: security.csrf.token_manager
+            #                login_path: /login
+            #                use_forward: false
+            #                check_path: /login
+            #                failure_path: null
+#            guard:
+#                authenticators:
+#                    - Chamilo\CoreBundle\Security\LoginFormAuthenticator
+#                    - Chamilo\CoreBundle\Security\TokenAuthenticator
+            entry_point: Chamilo\CoreBundle\Security\AuthenticationEntryPoint
+#            remember_me:
+#               secret: '%secret%'
+#                lifetime: 604800 # 1 week in seconds
+#                path: /
+            logout:
+                path: /logout
+                target: /
+            switch_user: true
+            json_login:
+                check_path: /login_json
+                # username_path: security.credentials.login
+                # password_path: security.credentials.password
+
+            custom_authenticators:
+                - Chamilo\CoreBundle\Security\Authenticator\LoginTokenAuthenticator
+                - Chamilo\CoreBundle\Security\Authenticator\OAuth2\GenericAuthenticator
+                - Chamilo\CoreBundle\Security\Authenticator\OAuth2\FacebookAuthenticator
+                - Chamilo\CoreBundle\Security\Authenticator\OAuth2\KeycloakAuthenticator
+                - Chamilo\CoreBundle\Security\Authenticator\OAuth2\AzureAuthenticator
+                - Chamilo\CoreBundle\Security\Authenticator\Ldap\LdapAuthenticator
+
+    access_control:
+        - { path: ^/scim/v2, roles: PUBLIC_ACCESS }
+        - { path: ^/login/token/check, roles: PUBLIC_ACCESS }
+        - { path: ^/login, roles: PUBLIC_ACCESS }
+        - { path: ^/api/authentication_token, roles: PUBLIC_ACCESS }

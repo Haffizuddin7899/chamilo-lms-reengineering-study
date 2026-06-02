@@ -1,0 +1,54 @@
+<?php
+
+declare(strict_types=1);
+
+/* For licensing terms, see /license.txt */
+
+namespace Chamilo\CoreBundle\Tool;
+
+use Chamilo\CoreBundle\Entity\AttemptFeedback;
+use Chamilo\CoreBundle\Entity\AttemptFile;
+use Chamilo\CourseBundle\Entity\CQuiz;
+use Chamilo\CourseBundle\Entity\CQuizCategory;
+use Chamilo\CourseBundle\Entity\CQuizQuestion;
+use Chamilo\CourseBundle\Entity\CQuizQuestionCategory;
+
+class Exercise extends AbstractTool implements ToolInterface
+{
+    public function getTitle(): string
+    {
+        return 'quiz';
+    }
+
+    public function getTitleToShow(): string
+    {
+        return 'Tests';
+    }
+
+    public function getIcon(): string
+    {
+        return 'mdi-order-bool-ascending-variant';
+    }
+
+    public function getLink(): string
+    {
+        return '/main/exercise/exercise.php';
+    }
+
+    public function getCategory(): string
+    {
+        return 'authoring';
+    }
+
+    public function getResourceTypes(): ?array
+    {
+        return [
+            'exercises' => CQuiz::class,
+            'questions' => CQuizQuestion::class,
+            'question_categories' => CQuizQuestionCategory::class,
+            'exercise_categories' => CQuizCategory::class,
+            'attempt_file' => AttemptFile::class,
+            'attempt_feedback' => AttemptFeedback::class,
+        ];
+    }
+}

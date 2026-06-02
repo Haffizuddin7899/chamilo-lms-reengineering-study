@@ -1,0 +1,20 @@
+<div class="grid md:grid-cols-12 gap-4">
+    <div class="sm:col-span-10 sm:col-start-2">
+        <h4>{{ 'ContextForCommentToBeGrade'|get_lang }}</h4>
+
+        <strong>{{ 'PortfolioItemTitleXName'|get_lang|format(item.title) }}</strong>
+
+        <p>{{ item.excerpt }}</p>
+
+        <div class="grid md:grid-cols-12 gap-4">
+            {% for node in comments_path %}
+                {% if loop.index != comments_path|length %}
+                    <div class="sm:col-span-{{ 12 - node.lvl }} sm:col-start-{{ node.lvl + 1 }}">
+                        <strong>{{ 'Comment by %s'|get_lang|format(node.creator.fullName) }}</strong>
+                        {{ node.content }}
+                    </div>
+                {% endif %}
+            {% endfor %}
+        </div>
+    </div>
+</div>

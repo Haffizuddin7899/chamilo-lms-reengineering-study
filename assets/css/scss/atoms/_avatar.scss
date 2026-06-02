@@ -1,0 +1,91 @@
+.p-avatar {
+  @apply inline-flex items-center justify-center rounded-lg bg-gray-25 w-8 h-8;
+  font-size: 1rem;
+
+  &-image {
+    @apply bg-transparent;
+  }
+
+  &-circle {
+    @apply rounded-full;
+
+    img {
+      @apply rounded-full
+    }
+  }
+
+  img {
+    @apply h-full w-full;
+  }
+
+  &.p-avatar-lg {
+    @apply h-16 w-16;
+    font-size: 2rem;
+  }
+
+  &.p-avatar-lg &-icon {
+    font-size: 2rem;
+  }
+
+  &.p-avatar-xl {
+    @apply h-28 w-28;
+    font-size: 3.5rem;
+  }
+
+  &.p-avatar-lg &-icon {
+    font-size: 3.5rem;
+  }
+
+  &-group {
+    @apply flex items-center;
+  }
+
+  &-group & + & {
+    @apply -ml-4;
+  }
+
+  &-group & {
+    @apply border border-solid border-white;
+  }
+}
+
+.avatar-list {
+  @apply flex flex-row flex-wrap gap-2;
+
+  .avatar-container {
+    @apply flex flex-row gap-2;
+
+    .p-avatar {
+      @apply flex-shrink-0 flex-grow-0;
+    }
+
+    .avatar-info {
+      p {
+        @apply text-caption
+        first:font-semibold;
+      }
+    }
+  }
+
+  &--several {
+    @apply gap-3;
+
+    .avatar-container {
+      @apply flex-col w-16 text-center;
+
+      .p-avatar {
+        @apply mx-auto;
+      }
+
+      .avatar-info {
+        p {
+          @apply text-tiny text-nowrap text-ellipsis overflow-hidden;
+        }
+      }
+    }
+  }
+
+  .field & {
+    @apply inline-flex align-middle;
+  }
+}

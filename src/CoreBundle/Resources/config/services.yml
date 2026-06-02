@@ -1,0 +1,183 @@
+# Settings parameters that will be used in the 'services' section
+parameters:
+  chamilo.search.xapian_index_dir: '%kernel.project_dir%/var/search'
+  chamilo.plugin.storage_dir: '%kernel.project_dir%/var/plugins'
+
+services:
+    _defaults:
+        autowire: true
+        public: true
+        autoconfigure: true
+
+    csrf.token_manager:
+        class: Symfony\Component\Security\Csrf\CsrfTokenManager
+
+    chamilo_core.translation.loader.po:
+        class: Symfony\Component\Translation\Loader\PoFileLoader
+        tags:
+            - {name: translation.loader, alias: po}
+
+    Chamilo\CoreBundle\:
+      resource: '../../*'
+      exclude: '../../{Repository,Component,DependencyInjection,EventListener,Form/DataTransformer/ResourceToIdentifierTransformer.php,Framework,Migrations,Settings,ChamiloCoreBundle.php,Entity,ApiResource,Security/Badge,Tool/LegacyPluginCourseTool.php}'
+      public: true
+
+    Doctrine\Migrations\Version\DbalMigrationFactory: ~
+    Chamilo\CoreBundle\Migrations\MigrationFactory:
+        decorates: Doctrine\Migrations\Version\DbalMigrationFactory
+        arguments: ['@Chamilo\CoreBundle\Migrations\MigrationFactory.inner', '@service_container', '@doctrine.orm.entity_manager']
+
+    Chamilo\CoreBundle\Controller\:
+        resource: '../../Controller'
+        tags: ['controller.service_arguments']
+
+    Chamilo\CoreBundle\Hook\HookFactory: ~
+
+    # Form types
+    # Custom yes/no form type, use in the platform settings
+    Chamilo\CoreBundle\Form\Type\YesNoType:
+        tags:
+            - {name: form.type}
+
+    Chamilo\CoreBundle\Component\Editor\Tiny\TinyEditor:
+        arguments: ['@translator', '@router']
+
+    Chamilo\CoreBundle\Component\VichUploader\AssetDirectoryNamer:
+      arguments:
+        - '@property_accessor'
+        - '@Chamilo\CoreBundle\Repository\AssetRepository'
+        - '@request_stack'
+
+    Chamilo\CoreBundle\Component\VichUploader\AssetFileNameNamer:
+      arguments:
+        - '@request_stack'
+        - '@translator'
+      tags:
+        - { name: vich_uploader.namer, mapping: assets }
+
+    Chamilo\CoreBundle\Helpers\GlideHelper:
+        arguments:
+            - {source: '@oneup_flysystem.resource_filesystem', cache: '@oneup_flysystem.resource_cache_filesystem'}
+            - '%glide_media_filters%'
+
+    Chamilo\CoreBundle\Helpers\GlideAssetHelper:
+      arguments:
+        $config:
+          source: '@oneup_flysystem.asset_filesystem'
+          cache: '@oneup_flysystem.asset_cache_filesystem'
+          driver: 'gd'
+        $filters: [ ]
+
+    Chamilo\CoreBundle\Helpers\GlideAssetUtil:
+        arguments:
+            - {source: '@oneup_flysystem.asset_filesystem', cache: '@oneup_flysystem.asset_cache_filesystem'}
+            - '%glide_media_filters%'
+
+    # Check if users are online
+#    chamilo_core.listener.online:
+#        class: Chamilo\CoreBundle\EventListener\OnlineListener
+#        arguments: [@security.context, @doctrine.orm.entity_manager ]
+#        tags:
+#            - {name: kernel.event_listener, event: kernel.controller}
+
+    Chamilo\CoreBundle\Repository\AssetRepository: ~
+
+    Chamilo\CoreBundle\Settings\SettingsManager:
+        arguments:
+            - '@sylius.registry.settings_schema'
+            - '@doctrine.orm.entity_manager'
+            - '@Chamilo\CoreBundle\Repository\SettingsCurrentRepository'
+            - '@event_dispatcher'
+            - '@request_stack'
+
+    Chamilo\CoreBundle\Twig\SettingsHelper:
+        arguments:
+            - '@Chamilo\CoreBundle\Settings\SettingsManager'
+        tags:
+            - {name: templating.helper, alias: chamilo_settings}
+
+    Chamilo\CoreBundle\Tool\ToolChain: ~
+
+    session.search_filter:
+        parent: 'api_platform.doctrine.orm.search_filter'
+        arguments:
+            $properties: { title: 'partial' }
+        tags: [ 'api_platform.filter' ]
+
+    session.property_filter:
+        parent: 'api_platform.serializer.property_filter'
+        tags: [ 'api_platform.filter' ]
+
+    session.order_filter:
+        parent: 'api_platform.doctrine.orm.order_filter'
+        arguments:
+            $properties: { id: ~, title: ~ }
+        tags: [ 'api_platform.filter' ]
+
+    session.group_filter:
+        parent: 'api_platform.serializer.group_filter'
+        tags: [ 'api_platform.filter' ]
+
+    _instanceof:
+        Chamilo\CoreBundle\Tool\ToolInterface:
+            tags: ['chamilo_core.tool_handler']
+
+    Chamilo\CoreBundle\Tool\HandlerCollection:
+        arguments:
+            - !tagged_iterator chamilo_core.tool_handler
+
+    Chamilo\CoreBundle\Filter\SocialWallFilter:
+        tags: [ 'api_platform.filter' ]
+
+    Chamilo\CoreBundle\AiProvider\AiProviderFactory:
+      arguments:
+        $httpClient: '@Symfony\Contracts\HttpClient\HttpClientInterface'
+        $settingsManager: '@Chamilo\CoreBundle\Settings\SettingsManager'
+        $aiRequestsRepository: '@Chamilo\CoreBundle\Repository\AiRequestsRepository'
+        $security: '@security.helper'
+
+    Chamilo\CoreBundle\AiProvider\OpenAiProvider:
+      factory: [ '@Chamilo\CoreBundle\AiProvider\AiProviderFactory', 'getProvider' ]
+      arguments: [ 'openai' ]
+
+    Chamilo\CoreBundle\AiProvider\DeepSeekAiProvider:
+      factory: [ '@Chamilo\CoreBundle\AiProvider\AiProviderFactory', 'getProvider' ]
+      arguments: [ 'deepseek' ]
+
+    Chamilo\CourseBundle\Repository\CAttendanceCalendarRepository:
+      arguments:
+        $registry: '@doctrine'
+        $em: '@doctrine.orm.entity_manager'
+
+    Chamilo\CoreBundle\EventListener\AccessUrlValidationListener:
+      arguments:
+        $accessUrlHelper: '@Chamilo\CoreBundle\Helpers\AccessUrlHelper'
+        $router: '@router'
+      tags:
+        - { name: kernel.event_listener, event: kernel.request, method: onKernelRequest, priority: 255 }
+
+    Chamilo\CoreBundle\Search\Xapian\SearchIndexPathResolver:
+      arguments:
+        $indexDir: '%chamilo.search.xapian_index_dir%'
+
+    Chamilo\CoreBundle\Search\Xapian\XapianSearchService:
+      arguments:
+        $indexPathResolver: '@Chamilo\CoreBundle\Search\Xapian\SearchIndexPathResolver'
+
+    Chamilo\CoreBundle\Command\DoctrineMigrationsMigrateCommandDecorator:
+      decorates: doctrine_migrations.migrate_command
+      arguments:
+        $inner: '@Chamilo\CoreBundle\Command\DoctrineMigrationsMigrateCommandDecorator.inner'
+      tags: [ 'console.command' ]
+
+    Chamilo\CoreBundle\AiProvider\AiChatCompletionClientInterface:
+      class: Chamilo\CoreBundle\AiProvider\DefaultAiChatCompletionClient
+      public: true
+
+    Chamilo\CoreBundle\Security\LoginCaptchaManager:
+      arguments:
+        $cache: '@cache.app'
+
+    Chamilo\CoreBundle\EventSubscriber\LoginSuccessSubscriber:
+      tags:
+        - { name: kernel.event_subscriber, dispatcher: security.event_dispatcher.main }

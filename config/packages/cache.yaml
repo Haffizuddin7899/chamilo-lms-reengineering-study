@@ -1,0 +1,32 @@
+framework:
+    cache:
+        pools:
+            doctrine.result_cache_pool:
+                adapter: cache.app
+            doctrine.system_cache_pool:
+                adapter: cache.system
+
+            # Document list cache: caches the per-page IID list + total count for up to 120 s.
+            # Uses whatever backend is configured for cache.app above (filesystem by default;
+            # switch cache.app to cache.adapter.apcu to use APCu on systems where it is available).
+            # The cache key includes the access_url ID so multi-portal instances never share entries.
+            chamilo.document_list:
+                adapter: cache.app
+                default_lifetime: 120
+        # Unique name of your app: used to compute stable namespaces for cache keys.
+        #prefix_seed: your_vendor_name/app_name
+
+        # The "app" cache stores to the filesystem by default.
+        # The data in this cache should persist between deploys.
+        # Other options include:
+
+        # Redis
+        #app: cache.adapter.redis
+        #default_redis_provider: redis://localhost
+
+        # APCu (not recommended with heavy random-write workloads as memory fragmentation can cause perf issues)
+        #app: cache.adapter.apcu
+
+        # Namespaced pools use the above "app" backend by default
+        #pools:
+            #my.dedicated.cache: null

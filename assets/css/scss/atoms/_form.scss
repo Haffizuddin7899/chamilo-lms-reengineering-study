@@ -1,0 +1,135 @@
+@layer base {
+  [type='text'],
+  [type='email'],
+  [type='url'],
+  [type='password'],
+  [type='number'],
+  [type='date'],
+  [type='datetime-local'],
+  [type='month'],
+  [type='search'],
+  [type='tel'],
+  [type='time'],
+  [type='week'],
+  [multiple],
+  textarea,
+  select {
+    @apply focus:ring-0 focus:outline-0;
+  }
+
+  label {
+
+    &:empty {
+      @apply hidden;
+    }
+  }
+}
+
+@layer components {
+  .form {
+    &--search,
+    &--inline {
+      @apply flex-row gap-3;
+    }
+
+    &--search {
+      button {
+        @apply flex-none;
+      }
+    }
+
+    &__group {
+      &--inline {
+        @apply flex gap-3;
+      }
+    }
+
+    &__field {
+      @apply flex flex-col gap-2;
+    }
+
+    &__radio-field {
+      @apply flex gap-2 items-center;
+    }
+  }
+}
+
+.field {
+  @apply mb-5
+    last:mb-0;
+
+  > small,
+  .help-text {
+    @apply text-caption text-primary mt-1;
+  }
+
+  &-group {
+    @apply flex gap-4 flex-wrap mb-4 items-start;
+  }
+
+  &.grid {
+    @apply mt-0;
+  }
+}
+
+.formgrid {
+  &.grid {
+    @apply mt-0;
+  }
+}
+
+.formgroup-inline {
+  @apply flex flex-wrap items-start;
+
+  .field,
+  .field-checkbox,
+  .field-radiobutton {
+    @apply mr-4;
+
+    > label {
+      @apply mr-2 mb-0;
+    }
+  }
+}
+
+.field-checkbox,
+.field-radiobutton {
+  @apply mb-4 flex items-center;
+
+  > label {
+    @apply ml-2 leading-none;
+  }
+}
+
+.p-error {
+  @apply text-error text-caption;
+}
+
+// Plain HTML form controls sized to match .btn height and rounding.
+.form-control {
+  @apply border border-solid border-gray-300 rounded-md leading-normal;
+  padding: calc(0.5rem - 1px) calc(1rem - 1px);
+}
+
+select.form-control {
+  @apply pr-8 appearance-none bg-no-repeat;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%236b7280' d='M2 4l4 4 4-4'/%3E%3C/svg%3E");
+  background-position: right 0.75rem center;
+  background-size: 12px;
+}
+
+.html-editor-container {
+  & .tox-tinymce {
+    @apply border border-solid border-gray-50 transition-colors appearance-none rounded-lg outline-transparent w-full pt-2
+      hover:border-primary;
+  }
+
+  &--focused {
+    & .tox-tinymce {
+      @apply border-primary outline-0 outline-none;
+    }
+  }
+
+  &--filled {
+  }
+}

@@ -1,0 +1,1041 @@
+<?php
+
+declare(strict_types=1);
+
+/* For licensing terms, see /license.txt */
+
+namespace Chamilo\CoreBundle\Controller\Admin;
+
+use Chamilo\CoreBundle\Component\Composer\ScriptHandler;
+use Chamilo\CoreBundle\Controller\BaseController;
+use Chamilo\CoreBundle\Entity\Course;
+use Chamilo\CoreBundle\Entity\ResourceFile;
+use Chamilo\CoreBundle\Entity\ResourceLink;
+use Chamilo\CoreBundle\Entity\ResourceNode;
+use Chamilo\CoreBundle\Entity\ResourceType;
+use Chamilo\CoreBundle\Entity\TrackEOnline;
+use Chamilo\CoreBundle\Form\TestEmailType;
+use Chamilo\CoreBundle\Framework\Container;
+use Chamilo\CoreBundle\Helpers\AccessUrlHelper;
+use Chamilo\CoreBundle\Helpers\CidReqHelper;
+use Chamilo\CoreBundle\Helpers\MailHelper;
+use Chamilo\CoreBundle\Helpers\QueryCacheHelper;
+use Chamilo\CoreBundle\Helpers\TempUploadHelper;
+use Chamilo\CoreBundle\Helpers\UserHelper;
+use Chamilo\CoreBundle\Repository\Node\CourseRepository;
+use Chamilo\CoreBundle\Repository\Node\UserRepository;
+use Chamilo\CoreBundle\Repository\ResourceFileRepository;
+use Chamilo\CoreBundle\Repository\ResourceNodeRepository;
+use Chamilo\CoreBundle\Settings\SettingsManager;
+use Chamilo\CourseBundle\Entity\CDocument;
+use Doctrine\DBAL\Connection;
+use Doctrine\ORM\EntityManagerInterface;
+use MessageManager;
+use RuntimeException;
+use Symfony\Component\HttpFoundation\JsonResponse;
+use Symfony\Component\HttpFoundation\Request;
+use Symfony\Component\HttpFoundation\Response;
+use Symfony\Component\Routing\Attribute\Route;
+use Symfony\Component\Security\Http\Attribute\IsGranted;
+use Symfony\Contracts\Translation\TranslatorInterface;
+use Throwable;
+use UserManager;
+
+#[Route('/admin')]
+class AdminController extends BaseController
+{
+    private const ITEMS_PER_PAGE = 50;
+
+    public function __construct(
+        private readonly ResourceNodeRepository $resourceNodeRepository,
+        private readonly AccessUrlHelper $accessUrlHelper,
+        private readonly UserHelper $userHelper,
+        private readonly CidReqHelper $cidReqHelper
+    ) {}
+
+    #[IsGranted('ROLE_ADMIN')]
+    #[Route('/register-campus', name: 'admin_register_campus', methods: ['POST'])]
+    public function registerCampus(Request $request, SettingsManager $settingsManager): Response
+    {
+        $requestData = $request->toArray();
+        $doNotListCampus = (bool) $requestData['donotlistcampus'];
+
+        $settingsManager->setUrl($this->accessUrlHelper->getCurrent());
+        $settingsManager->updateSetting('platform.registered', 'true');
+
+        $settingsManager->updateSetting(
+            'platform.donotlistcampus',
+            $doNotListCampus ? 'true' : 'false'
+        );
+
+        return new Response('', Response::HTTP_NO_CONTENT);
+    }
+
+    #[IsGranted('ROLE_ADMIN')]
+    #[Route('/files_info', name: 'admin_files_info', methods: ['GET'])]
+    public function listFilesInfo(
+        Request $request,
+        ResourceFileRepository $resourceFileRepository,
+        CourseRepository $courseRepository
+    ): Response {
+        $page = $request->query->getInt('page', 1);
+        $search = $request->query->get('search', '');
+        $offset = ($page - 1) * self::ITEMS_PER_PAGE;
+
+        $files = $resourceFileRepository->searchFiles($search, $offset, self::ITEMS_PER_PAGE);
+        $totalItems = $resourceFileRepository->countFiles($search);
+        $totalPages = $totalItems > 0 ? (int) ceil($totalItems / self::ITEMS_PER_PAGE) : 1;
+
+        $fileUrls = [];
+        $filePaths = [];
+        $orphanFlags = [];
+        $linksCount = [];
+        $coursesByFile = [];
+
+        /** @var ResourceFile $file */
+        foreach ($files as $file) {
+            $resourceNode = $file->getResourceNode();
+            $count = 0;
+            $coursesForThisFile = [];
+
+            if ($resourceNode) {
+                // Public URL to open/download this file
+                $fileUrls[$file->getId()] = $this->resourceNodeRepository->getResourceFileUrl($resourceNode);
+
+                // Count how many ResourceLinks still point to this node and collect courses.
+                $links = $resourceNode->getResourceLinks();
+                if ($links) {
+                    $count = $links->count();
+
+                    foreach ($links as $link) {
+                        $course = $link->getCourse();
+                        if (!$course) {
+                            continue;
+                        }
+
+                        $courseId = $course->getId();
+
+                        // Root resource node of the course (used to build Documents URL in the template JS)
+                        $courseResourceNode = $course->getResourceNode();
+                        $courseResourceNodeId = $courseResourceNode ? $courseResourceNode->getId() : null;
+
+                        // Avoid duplicates for the same course.
+                        if (!isset($coursesForThisFile[$courseId])) {
+                            $coursesForThisFile[$courseId] = [
+                                'id' => $courseId,
+                                'code' => $course->getCode(),
+                                'title' => $course->getTitle(),
+                                'resourceNodeId' => $courseResourceNodeId,
+                            ];
+                        }
+                    }
+                }
+            } else {
+                $fileUrls[$file->getId()] = null;
+            }
+
+            // Physical path on disk (used only for display/copy)
+            $filePaths[$file->getId()] = '/upload/resource'.$this->resourceNodeRepository->getFilename($file);
+
+            $linksCount[$file->getId()] = $count;
+            $orphanFlags[$file->getId()] = 0 === $count;
+            $coursesByFile[$file->getId()] = array_values($coursesForThisFile);
+        }
+
+        // Build course selector options for the "Attach to course" form.
+        $allCourses = $courseRepository->findBy([], ['title' => 'ASC']);
+        $courseOptions = [];
+
+        /** @var Course $course */
+        foreach ($allCourses as $course) {
+            $courseResourceNode = $course->getResourceNode();
+            $courseResourceNodeId = $courseResourceNode ? $courseResourceNode->getId() : null;
+
+            $courseOptions[] = [
+                'id' => $course->getId(),
+                'code' => $course->getCode(),
+                'title' => $course->getTitle(),
+                'resourceNodeId' => $courseResourceNodeId,
+            ];
+        }
+
+        return $this->render('@ChamiloCore/Admin/files_info.html.twig', [
+            'files' => $files,
+            'fileUrls' => $fileUrls,
+            'filePaths' => $filePaths,
+            'totalPages' => $totalPages,
+            'currentPage' => $page,
+            'search' => $search,
+            'orphanFlags' => $orphanFlags,
+            'linksCount' => $linksCount,
+            'coursesByFile' => $coursesByFile,
+            'courseOptions' => $courseOptions,
+        ]);
+    }
+
+    #[IsGranted('ROLE_ADMIN')]
+    #[Route('/files_info/attach', name: 'admin_files_info_attach', methods: ['POST'])]
+    public function attachOrphanFileToCourse(
+        Request $request,
+        ResourceFileRepository $resourceFileRepository,
+        CourseRepository $courseRepository,
+        EntityManagerInterface $em
+    ): Response {
+        $token = (string) $request->request->get('_token', '');
+        if (!$this->isCsrfTokenValid('attach_orphan_file', $token)) {
+            throw $this->createAccessDeniedException('Invalid CSRF token.');
+        }
+
+        $fileId = $request->request->getInt('resource_file_id', 0);
+        $page = $request->request->getInt('page', 1);
+        $search = (string) $request->request->get('search', '');
+
+        if ($fileId <= 0) {
+            $this->addFlash('error', 'Missing resource file identifier.');
+
+            return $this->redirectToRoute('admin_files_info', [
+                'page' => $page,
+                'search' => $search,
+            ]);
+        }
+
+        // Collect course codes from multi-select.
+        $courseCodes = [];
+        $multi = $request->request->all('course_codes');
+        if (\is_array($multi)) {
+            foreach ($multi as $code) {
+                $code = trim((string) $code);
+                if ('' !== $code) {
+                    $courseCodes[] = $code;
+                }
+            }
+        }
+
+        // Fallback to single value if any.
+        if (0 === \count($courseCodes)) {
+            $single = $request->request->get('course_code');
+            $single = null === $single ? '' : trim((string) $single);
+            if ('' !== $single) {
+                $courseCodes[] = $single;
+            }
+        }
+
+        // Normalize and remove duplicates.
+        $courseCodes = array_values(array_unique($courseCodes));
+
+        if (0 === \count($courseCodes)) {
+            $this->addFlash('error', 'Please select at least one course.');
+
+            return $this->redirectToRoute('admin_files_info', [
+                'page' => $page,
+                'search' => $search,
+            ]);
+        }
+
+        /** @var ResourceFile|null $resourceFile */
+        $resourceFile = $resourceFileRepository->find($fileId);
+        if (!$resourceFile) {
+            $this->addFlash('error', 'Resource file not found.');
+
+            return $this->redirectToRoute('admin_files_info', [
+                'page' => $page,
+                'search' => $search,
+            ]);
+        }
+
+        // Existing node for this file (can be null in some legacy cases).
+        $resourceNode = $resourceFile->getResourceNode();
+
+        // Hidden field in the template: always "1" now.
+        $createDocuments = (bool) $request->request->get('create_documents', false);
+
+        // Map existing links by course id to avoid duplicates.
+        $existingByCourseId = [];
+        if ($resourceNode) {
+            $links = $resourceNode->getResourceLinks();
+            if ($links) {
+                foreach ($links as $existingLink) {
+                    $course = $existingLink->getCourse();
+                    if ($course) {
+                        $existingByCourseId[$course->getId()] = true;
+                    }
+                }
+            }
+        }
+
+        // "Orphan" means: no links yet or no node at all.
+        $wasOrphan = (null === $resourceNode) || (0 === \count($existingByCourseId));
+        $attachedTitles = [];
+        $skippedTitles = [];
+
+        // Try to reuse an existing visible document for this node.
+        $documentRepo = Container::getDocumentRepository();
+
+        /** @var CDocument|null $sharedDocument */
+        $sharedDocument = $resourceNode
+            ? $documentRepo->findOneBy(['resourceNode' => $resourceNode])
+            : null;
+
+        foreach ($courseCodes as $code) {
+            /** @var Course|null $course */
+            $course = $courseRepository->findOneBy(['code' => $code]);
+            if (!$course) {
+                $skippedTitles[] = \sprintf('%s (not found)', $code);
+
+                continue;
+            }
+
+            $courseId = $course->getId();
+            if (isset($existingByCourseId[$courseId])) {
+                // Already attached to this course.
+                $skippedTitles[] = \sprintf('%s (already attached)', (string) $course->getTitle());
+
+                continue;
+            }
+
+            // If there is already a node but it was truly orphan (no links),
+            // re-parent the node once to the first target course root.
+            if ($wasOrphan && $resourceNode && method_exists($course, 'getResourceNode')) {
+                $courseRootNode = $course->getResourceNode();
+                if ($courseRootNode) {
+                    $resourceNode->setParent($courseRootNode);
+                }
+                $wasOrphan = false;
+            }
+
+            // Mark this course as now attached to avoid duplicates in this loop.
+            $existingByCourseId[$courseId] = true;
+            $attachedTitles[] = (string) $course->getTitle();
+
+            if ($createDocuments) {
+                // Ensure we have a shared document for this file.
+                if (null === $sharedDocument) {
+                    // This will create the ResourceNode if needed and the CDocument.
+                    $sharedDocument = $this->createVisibleDocumentFromResourceFile($resourceFile, $course, $em);
+
+                    // Refresh local node reference in case it was created inside the helper.
+                    $resourceNode = $resourceFile->getResourceNode();
+                }
+
+                // IMPORTANT: some legacy documents might not have a parent set.
+                // We must set a parent (owning course) before calling addCourseLink,
+                // or AbstractResource::addCourseLink() will throw.
+                if (null === $sharedDocument->getParent()) {
+                    $sharedDocument->setParent($course);
+                }
+
+                // For every course, share the same document via ResourceLinks.
+                $session = $this->cidReqHelper->getDoctrineSessionEntity();
+                $group = null;
+                $sharedDocument->addCourseLink($course, $session, $group);
+            }
+        }
+
+        // Single flush for all changes (links + optional new CDocument).
+        $em->flush();
+
+        if (!empty($attachedTitles)) {
+            $this->addFlash(
+                'success',
+                \sprintf(
+                    'File "%s" has been attached to %d course(s): %s.',
+                    (string) ($resourceFile->getOriginalName() ?? $resourceFile->getTitle() ?? $resourceFile->getId()),
+                    \count($attachedTitles),
+                    implode(', ', $attachedTitles)
+                )
+            );
+        }
+
+        if (!empty($skippedTitles)) {
+            $this->addFlash(
+                'warning',
+                \sprintf(
+                    'Some courses were skipped: %s.',
+                    implode(', ', $skippedTitles)
+                )
+            );
+        }
+
+        return $this->redirectToRoute('admin_files_info', [
+            'page' => $page,
+            'search' => $search,
+        ]);
+    }
+
+    #[IsGranted('ROLE_ADMIN')]
+    #[Route('/files_info/detach', name: 'admin_files_info_detach', methods: ['POST'])]
+    public function detachFileFromCourse(
+        Request $request,
+        ResourceFileRepository $resourceFileRepository,
+        EntityManagerInterface $em
+    ): Response {
+        $token = (string) $request->request->get('_token', '');
+        if (!$this->isCsrfTokenValid('detach_file_from_course', $token)) {
+            throw $this->createAccessDeniedException('Invalid CSRF token.');
+        }
+
+        $fileId = $request->request->getInt('resource_file_id', 0);
+        $courseId = $request->request->getInt('course_id', 0);
+        $page = $request->request->getInt('page', 1);
+        $search = (string) $request->request->get('search', '');
+
+        if ($fileId <= 0 || $courseId <= 0) {
+            $this->addFlash('error', 'Missing file or course identifier.');
+
+            return $this->redirectToRoute('admin_files_info', [
+                'page' => $page,
+                'search' => $search,
+            ]);
+        }
+
+        /** @var ResourceFile|null $resourceFile */
+        $resourceFile = $resourceFileRepository->find($fileId);
+        if (!$resourceFile) {
+            $this->addFlash('error', 'Resource file not found.');
+
+            return $this->redirectToRoute('admin_files_info', [
+                'page' => $page,
+                'search' => $search,
+            ]);
+        }
+
+        $resourceNode = $resourceFile->getResourceNode();
+        if (!$resourceNode) {
+            $this->addFlash('error', 'This resource file has no resource node and cannot be detached.');
+
+            return $this->redirectToRoute('admin_files_info', [
+                'page' => $page,
+                'search' => $search,
+            ]);
+        }
+
+        $links = $resourceNode->getResourceLinks();
+        $removed = 0;
+
+        foreach ($links as $link) {
+            $course = $link->getCourse();
+            if ($course && $course->getId() === $courseId) {
+                $em->remove($link);
+                ++$removed;
+            }
+        }
+
+        if ($removed > 0) {
+            $em->flush();
+
+            $this->addFlash(
+                'success',
+                \sprintf(
+                    'File has been detached from %d course link(s).',
+                    $removed
+                )
+            );
+        } else {
+            $this->addFlash(
+                'warning',
+                'This file is not attached to the selected course.'
+            );
+        }
+
+        return $this->redirectToRoute('admin_files_info', [
+            'page' => $page,
+            'search' => $search,
+        ]);
+    }
+
+    #[IsGranted('ROLE_ADMIN')]
+    #[Route('/files_info/delete', name: 'admin_files_info_delete', methods: ['POST'])]
+    public function deleteOrphanFile(
+        Request $request,
+        ResourceFileRepository $resourceFileRepository,
+        EntityManagerInterface $em
+    ): Response {
+        $token = (string) $request->request->get('_token', '');
+        if (!$this->isCsrfTokenValid('delete_orphan_file', $token)) {
+            throw $this->createAccessDeniedException('Invalid CSRF token.');
+        }
+
+        $fileId = $request->request->getInt('resource_file_id', 0);
+        $page = $request->request->getInt('page', 1);
+        $search = (string) $request->request->get('search', '');
+
+        if ($fileId <= 0) {
+            $this->addFlash('error', 'Missing resource file identifier.');
+
+            return $this->redirectToRoute('admin_files_info', [
+                'page' => $page,
+                'search' => $search,
+            ]);
+        }
+
+        $resourceFile = $resourceFileRepository->find($fileId);
+        if (!$resourceFile) {
+            $this->addFlash('error', 'Resource file not found.');
+
+            return $this->redirectToRoute('admin_files_info', [
+                'page' => $page,
+                'search' => $search,
+            ]);
+        }
+
+        $resourceNode = $resourceFile->getResourceNode();
+        $linksCount = $resourceNode ? $resourceNode->getResourceLinks()->count() : 0;
+        if ($linksCount > 0) {
+            $this->addFlash('warning', 'This file is still used by at least one course/session and cannot be deleted.');
+
+            return $this->redirectToRoute('admin_files_info', [
+                'page' => $page,
+                'search' => $search,
+            ]);
+        }
+
+        // Compute physical path in var/upload/resource (adapt if you use another directory).
+        $relativePath = $this->resourceNodeRepository->getFilename($resourceFile);
+        $storageRoot = $this->getParameter('kernel.project_dir').'/var/upload/resource';
+        $absolutePath = $storageRoot.$relativePath;
+
+        if (is_file($absolutePath) && is_writable($absolutePath)) {
+            @unlink($absolutePath);
+        }
+
+        // Optionally remove the resource node as well if it is really orphan.
+        if ($resourceNode) {
+            $em->remove($resourceNode);
+        }
+
+        $em->remove($resourceFile);
+        $em->flush();
+
+        $this->addFlash('success', 'Orphan file and its physical content have been deleted definitively.');
+
+        return $this->redirectToRoute('admin_files_info', [
+            'page' => $page,
+            'search' => $search,
+        ]);
+    }
+
+    #[IsGranted('ROLE_ADMIN')]
+    #[Route('/resources_info', name: 'admin_resources_info', methods: ['GET'])]
+    public function listResourcesInfo(
+        Request $request,
+        ResourceNodeRepository $resourceNodeRepo,
+        EntityManagerInterface $em
+    ): Response {
+        $resourceTypeId = $request->query->getInt('type');
+        $resourceTypes = $em->getRepository(ResourceType::class)->findAll();
+
+        $courses = [];
+        $showUsers = false;
+        $typeTitle = null;
+
+        if ($resourceTypeId > 0) {
+            /** @var ResourceType|null $rt */
+            $rt = $em->getRepository(ResourceType::class)->find($resourceTypeId);
+            $typeTitle = $rt?->getTitle();
+
+            /** Load ResourceLinks for the selected type */
+            /** @var ResourceLink[] $resourceLinks */
+            $resourceLinks = $em->getRepository(ResourceLink::class)->createQueryBuilder('rl')
+                ->join('rl.resourceNode', 'rn')
+                ->where('rn.resourceType = :type')
+                ->setParameter('type', $resourceTypeId)
+                ->getQuery()
+                ->getResult()
+            ;
+
+            /** Aggregate by course/session key */
+            $seen = [];
+            $keysMeta = [];
+            foreach ($resourceLinks as $link) {
+                $course = $link->getCourse();
+                if (!$course) {
+                    continue;
+                }
+                $session = $link->getSession();
+                $node = $link->getResourceNode();
+
+                $cid = $course->getId();
+                $sid = $session?->getId() ?? 0;
+                $key = self::makeKey($cid, $sid);
+
+                if (!isset($seen[$key])) {
+                    $seen[$key] = [
+                        'type' => $sid ? 'session' : 'course',
+                        'id' => $sid ?: $cid,
+                        'courseId' => $cid,
+                        'sessionId' => $sid,
+                        'title' => $sid ? ($session->getTitle().' - '.$course->getTitle()) : $course->getTitle(),
+                        'url' => $sid
+                            ? '/course/'.$cid.'/home?sid='.$sid
+                            : '/course/'.$cid.'/home',
+                        'count' => 0,
+                        'items' => [],
+                        'users' => [],
+                        'firstCreatedAt' => $node->getCreatedAt(),
+                    ];
+                    $keysMeta[$key] = ['cid' => $cid, 'sid' => $sid];
+                }
+
+                $seen[$key]['count']++;
+                $seen[$key]['items'][] = $node->getTitle();
+
+                if ($node->getCreatedAt() < $seen[$key]['firstCreatedAt']) {
+                    $seen[$key]['firstCreatedAt'] = $node->getCreatedAt();
+                }
+            }
+
+            /* Populate users depending on the resource type */
+            if (!empty($seen)) {
+                $usersMap = $this->fetchUsersForType($typeTitle, $em, $keysMeta);
+                foreach ($usersMap as $key => $names) {
+                    if (isset($seen[$key]) && $names) {
+                        $seen[$key]['users'] = array_values(array_unique($names));
+                    }
+                }
+                // Show the "Users" column only if there's any user to display
+                $showUsers = array_reduce($seen, fn ($acc, $row) => $acc || !empty($row['users']), false);
+            }
+
+            /** Normalize output. */
+            $courses = array_values(array_map(static function ($row) {
+                $row['items'] = array_values(array_unique($row['items']));
+
+                return $row;
+            }, $seen));
+
+            usort($courses, static fn ($a, $b) => strnatcasecmp($a['title'], $b['title']));
+        }
+
+        return $this->render('@ChamiloCore/Admin/resources_info.html.twig', [
+            'resourceTypes' => $resourceTypes,
+            'selectedType' => $resourceTypeId,
+            'courses' => $courses,
+            'showUsers' => $showUsers,
+            'typeTitle' => $typeTitle,
+        ]);
+    }
+
+    #[IsGranted('ROLE_ADMIN')]
+    #[Route('/test-cache-all-users', name: 'chamilo_core_user_test_cache_all_users')]
+    public function testCacheAllUsers(UserRepository $userRepository): JsonResponse
+    {
+        // Without cache
+        $startNoCache = microtime(true);
+        $usersNoCache = $userRepository->findAllUsers(false);
+        $timeNoCache = microtime(true) - $startNoCache;
+
+        // With cache
+        $startCache = microtime(true);
+        $resultCached = $userRepository->findAllUsers(true);
+        $timeCache = microtime(true) - $startCache;
+
+        // Check if we have a key (we do if cache was used)
+        $usersCache = $resultCached['data'] ?? $resultCached;
+
+        $cacheKey = $resultCached['cache_key'] ?? null;
+
+        return $this->json([
+            'without_cache' => [
+                'count' => \count($usersNoCache),
+                'execution_time' => $timeNoCache,
+            ],
+            'with_cache' => [
+                'count' => \count($usersCache),
+                'execution_time' => $timeCache,
+                'cache_key' => $cacheKey,
+            ],
+        ]);
+    }
+
+    #[IsGranted('ROLE_ADMIN')]
+    #[Route(path: '/test-cache-all-users/invalidate', name: 'chamilo_core_user_test_cache_all_users_invalidate')]
+    public function invalidateCacheAllUsers(QueryCacheHelper $queryCacheHelper): JsonResponse
+    {
+        $cacheKey = $queryCacheHelper->getCacheKey('findAllUsers', []);
+        $queryCacheHelper->invalidate('findAllUsers');
+
+        return $this->json([
+            'message' => 'Cache for users invalidated!',
+            'invalidated_cache_key' => $cacheKey,
+        ]);
+    }
+
+    #[IsGranted('ROLE_ADMIN')]
+    #[Route('/cleanup-temp-uploads', name: 'admin_cleanup_temp_uploads', methods: ['GET'])]
+    public function showCleanupTempUploads(
+        TempUploadHelper $tempUploadHelper,
+    ): Response {
+        $stats = $tempUploadHelper->stats(); // ['files' => int, 'bytes' => int]
+
+        return $this->render('@ChamiloCore/Admin/cleanup_temp_uploads.html.twig', [
+            'tempDir' => $tempUploadHelper->getTempDir(),
+            'stats' => $stats,
+            'defaultOlderThan' => 0, // 0 = delete all
+        ]);
+    }
+
+    #[IsGranted('ROLE_ADMIN')]
+    #[Route('/cleanup-temp-uploads', name: 'admin_cleanup_temp_uploads_run', methods: ['POST'])]
+    public function runCleanupTempUploads(
+        Request $request,
+        TempUploadHelper $tempUploadHelper,
+    ): Response {
+        // CSRF
+        $token = (string) $request->request->get('_token', '');
+        if (!$this->isCsrfTokenValid('cleanup_temp_uploads', $token)) {
+            throw $this->createAccessDeniedException('Invalid CSRF token.');
+        }
+
+        // Read inputs
+        $olderThan = (int) $request->request->get('older_than', 0);
+        $dryRun = (bool) $request->request->get('dry_run', false);
+
+        // Purge temp uploads/cache (configurable dir via helper parameter)
+        $purge = $tempUploadHelper->purge(olderThanMinutes: $olderThan, dryRun: $dryRun);
+
+        if ($dryRun) {
+            $this->addFlash('success', \sprintf(
+                'DRY RUN: %d files (%.2f MB) would be removed from %s.',
+                $purge['files'],
+                $purge['bytes'] / 1048576,
+                $tempUploadHelper->getTempDir()
+            ));
+        } else {
+            $this->addFlash('success', \sprintf(
+                'Temporary uploads/cache cleaned: %d files removed (%.2f MB) in %s.',
+                $purge['files'],
+                $purge['bytes'] / 1048576,
+                $tempUploadHelper->getTempDir()
+            ));
+        }
+
+        // Remove legacy build main.js and hashed variants
+        $publicBuild = $this->getParameter('kernel.project_dir').'/public/build';
+        if (is_dir($publicBuild) && is_readable($publicBuild)) {
+            @unlink($publicBuild.'/main.js');
+            $files = @scandir($publicBuild) ?: [];
+            foreach ($files as $f) {
+                if (preg_match('/^main\..*\.js$/', $f)) {
+                    @unlink($publicBuild.'/'.$f);
+                }
+            }
+        }
+
+        // Rebuild styles/assets like original archive_cleanup.php
+        try {
+            ScriptHandler::dumpCssFiles();
+            $this->addFlash('success', 'The styles and assets in the web/ folder have been refreshed.');
+        } catch (Throwable $e) {
+            $this->addFlash('error', 'The styles and assets could not be refreshed. Ensure public/ is writable.');
+            error_log($e->getMessage());
+        }
+
+        return $this->redirectToRoute('admin_cleanup_temp_uploads', [], Response::HTTP_SEE_OTHER);
+    }
+
+    #[IsGranted('ROLE_ADMIN')]
+    #[Route('/email_tester', name: 'admin_email_tester')]
+    public function testEmail(
+        Request $request,
+        MailHelper $mailHelper,
+        TranslatorInterface $translator,
+        SettingsManager $settingsManager,
+        UserHelper $userHelper,
+    ): Response {
+        $errorsInfo = MessageManager::failedSentMailErrors();
+
+        $form = $this->createForm(TestEmailType::class);
+        $form->handleRequest($request);
+
+        if ($form->isSubmitted() && $form->isValid()) {
+            $data = $form->getData();
+
+            $mailHelper->send(
+                $translator->trans('User testing of e-mail configuration'),
+                $data['destination'],
+                $data['subject'],
+                $data['content'],
+                UserManager::formatUserFullName($userHelper->getCurrent()),
+                $settingsManager->getSetting('mail.mailer_from_email')
+            );
+
+            $this->addFlash(
+                'success',
+                $translator->trans('E-mail sent. This procedure works in all aspects similarly to the normal e-mail sending of Chamilo, but allows for more flexibility in terms of destination e-mail and message body.')
+            );
+
+            return $this->redirectToRoute('admin_email_tester');
+        }
+
+        return $this->render(
+            '@ChamiloCore/Admin/email_tester.html.twig',
+            [
+                'mailer_dsn' => $settingsManager->getSetting('mail.mailer_dsn'),
+                'form' => $form,
+                'errors' => $errorsInfo,
+            ]
+        );
+    }
+
+    #[IsGranted('ROLE_ADMIN')]
+    #[Route('/users/{id}/clear-session', name: 'admin_user_clear_session', methods: ['POST'])]
+    public function clearUserSession(
+        int $id,
+        Request $request,
+        UserRepository $userRepository,
+        EntityManagerInterface $em,
+        SettingsManager $settingsManager
+    ): Response {
+        if ('true' !== $settingsManager->getSetting('security.prevent_multiple_simultaneous_login', true)) {
+            throw $this->createAccessDeniedException('This action is only available when prevent_multiple_simultaneous_login is enabled.');
+        }
+
+        $token = (string) $request->request->get('_token', '');
+
+        if (!$this->isCsrfTokenValid('clear_user_session_'.$id, $token)) {
+            throw $this->createAccessDeniedException('Invalid CSRF token.');
+        }
+
+        $user = $userRepository->find($id);
+
+        if (null === $user) {
+            $this->addFlash('error', 'User not found.');
+
+            return $this->redirect('/main/admin/user_list.php');
+        }
+
+        $deleted = $em
+            ->createQueryBuilder()
+            ->delete(TrackEOnline::class, 'online')
+            ->where('online.loginUserId = :userId')
+            ->setParameter('userId', $id)
+            ->getQuery()
+            ->execute()
+        ;
+
+        $this->addFlash(
+            'success',
+            \sprintf('User active session has been cleared. Removed records: %d.', (int) $deleted)
+        );
+
+        return $this->redirect('/main/admin/user_information.php?user_id='.$id);
+    }
+
+    /**
+     * Create a visible CDocument in a course from an existing ResourceFile.
+     */
+    private function createVisibleDocumentFromResourceFile(
+        ResourceFile $resourceFile,
+        Course $course,
+        EntityManagerInterface $em
+    ): CDocument {
+        $userEntity = $this->userHelper->getCurrent();
+        if (null === $userEntity) {
+            throw new RuntimeException('Current user is required to create or reuse a document.');
+        }
+
+        // Current node (may be null for truly orphan files).
+        $resourceNode = $resourceFile->getResourceNode();
+
+        if (null === $resourceNode) {
+            $courseRootNode = $course->getResourceNode();
+            if (null === $courseRootNode) {
+                throw new RuntimeException('Course root node is required to attach a resource node.');
+            }
+
+            // Create the node that will be shared by all courses.
+            $resourceNode = new ResourceNode();
+            $resourceNode
+                ->setCreator($userEntity)
+                ->setTitle(
+                    $resourceFile->getOriginalName()
+                    ?? $resourceFile->getTitle()
+                    ?? (string) $resourceFile->getId()
+                )
+                ->setParent($courseRootNode)
+                ->setResourceType(
+                    $this->resourceNodeRepository->getResourceTypeForClass(CDocument::class)
+                )
+            ;
+
+            // Link file <-> node so getFirstResourceFile() returns this file.
+            $resourceNode->addResourceFile($resourceFile);
+            $resourceFile->setResourceNode($resourceNode);
+
+            $em->persist($resourceNode);
+            $em->persist($resourceFile);
+        }
+
+        $documentRepo = Container::getDocumentRepository();
+
+        /** @var CDocument|null $document */
+        $document = $documentRepo->findOneBy([
+            'resourceNode' => $resourceNode,
+        ]);
+
+        if (null === $document) {
+            $title = $resourceFile->getOriginalName()
+                ?? $resourceFile->getTitle()
+                ?? (string) $resourceFile->getId();
+
+            $document = (new CDocument())
+                ->setFiletype('file')
+                ->setTitle($title)
+                ->setComment(null)
+                ->setReadonly(false)
+                ->setTemplate(false)
+                ->setCreator($userEntity)
+                // First course becomes the logical owner. The node is shared.
+                ->setParent($course)
+                ->setResourceNode($resourceNode)
+            ;
+
+            $em->persist($document);
+        }
+
+        // IMPORTANT: Always ensure the file is linked to the document's node,
+        // even if it already had a resource node.
+        $documentNode = $document->getResourceNode();
+        if (null !== $documentNode && $resourceFile->getResourceNode() !== $documentNode) {
+            // Move the file to the shared document node used by the document.
+            $documentNode->addResourceFile($resourceFile);
+            $resourceFile->setResourceNode($documentNode);
+            $em->persist($resourceFile);
+        }
+
+        // Do NOT create course links or flush here: this is handled by the caller.
+        return $document;
+    }
+
+    /**
+     * Returns a map key => [user names...] depending on the selected resource type.
+     *
+     * @param array<string,array{cid:int,sid:int}> $keysMeta
+     *
+     * @return array<string,string[]>
+     */
+    private function fetchUsersForType(?string $typeTitle, EntityManagerInterface $em, array $keysMeta): array
+    {
+        $type = \is_string($typeTitle) ? strtolower($typeTitle) : '';
+
+        return match ($type) {
+            'dropbox' => $this->fetchDropboxRecipients($em, $keysMeta),
+            // 'student_publications' => $this->fetchStudentPublicationsUsers($em, $keysMeta), // TODO
+            default => $this->fetchUsersFromResourceLinks($em, $keysMeta),
+        };
+    }
+
+    /**
+     * Default behavior: list users tied to ResourceLink.user (user-scoped visibility).
+     *
+     * @param array<string,array{cid:int,sid:int}> $keysMeta
+     *
+     * @return array<string,string[]>
+     */
+    private function fetchUsersFromResourceLinks(EntityManagerInterface $em, array $keysMeta): array
+    {
+        if (!$keysMeta) {
+            return [];
+        }
+
+        // Load resource links having a user and group them by (cid,sid)
+        $q = $em->createQuery(
+            'SELECT rl, c, s, u
+           FROM Chamilo\CoreBundle\Entity\ResourceLink rl
+           LEFT JOIN rl.course c
+           LEFT JOIN rl.session s
+           LEFT JOIN rl.user u
+          WHERE rl.user IS NOT NULL'
+        );
+
+        /** @var ResourceLink[] $links */
+        $links = $q->getResult();
+
+        $out = [];
+        foreach ($links as $rl) {
+            $cid = $rl->getCourse()?->getId();
+            if (!$cid) {
+                continue;
+            }
+            $sid = $rl->getSession()?->getId() ?? 0;
+            $key = self::makeKey($cid, $sid);
+            if (!isset($keysMeta[$key])) {
+                continue; // ignore links not present in the current table
+            }
+
+            $name = $rl->getUser()?->getFullName();
+            if ($name) {
+                $out[$key][] = $name;
+            }
+        }
+        // Dedupe
+        foreach ($out as $k => $arr) {
+            $out[$k] = array_values(array_unique(array_filter($arr)));
+        }
+
+        return $out;
+    }
+
+    /**
+     * Dropbox-specific: list real recipients from c_dropbox_person (joined with c_dropbox_file and user).
+     *
+     * @param array<string,array{cid:int,sid:int}> $keysMeta
+     *
+     * @return array<string,string[]>
+     */
+    private function fetchDropboxRecipients(EntityManagerInterface $em, array $keysMeta): array
+    {
+        if (!$keysMeta) {
+            return [];
+        }
+
+        $cids = array_values(array_unique(array_map(static fn ($m) => (int) $m['cid'], $keysMeta)));
+        if (!$cids) {
+            return [];
+        }
+
+        $conn = $em->getConnection();
+        $sql = "SELECT
+                    p.c_id                       AS cid,
+                    f.session_id                 AS sid,
+                    CONCAT(u.firstname, ' ', u.lastname) AS uname
+                FROM c_dropbox_person p
+                INNER JOIN c_dropbox_file f
+                        ON f.iid = p.file_id
+                       AND f.c_id = p.c_id
+                INNER JOIN `user` u
+                        ON u.id = p.user_id
+                WHERE p.c_id IN (:cids)
+        ";
+
+        $rows = $conn->executeQuery($sql, ['cids' => $cids], ['cids' => Connection::PARAM_INT_ARRAY])->fetchAllAssociative();
+
+        $out = [];
+        foreach ($rows as $r) {
+            $cid = (int) ($r['cid'] ?? 0);
+            $sid = (int) ($r['sid'] ?? 0);
+            $key = self::makeKey($cid, $sid);
+            if (!isset($keysMeta[$key])) {
+                continue; // ignore entries not displayed in the table
+            }
+            $uname = trim((string) ($r['uname'] ?? ''));
+            if ('' !== $uname) {
+                $out[$key][] = $uname;
+            }
+        }
+        // Dedupe
+        foreach ($out as $k => $arr) {
+            $out[$k] = array_values(array_unique(array_filter($arr)));
+        }
+
+        return $out;
+    }
+
+    /**
+     * Helper to build the aggregation key for course/session rows.
+     */
+    private static function makeKey(int $cid, int $sid): string
+    {
+        return $sid > 0 ? ('s'.$sid.'-'.$cid) : ('c'.$cid);
+    }
+}

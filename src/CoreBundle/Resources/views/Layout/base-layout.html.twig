@@ -1,0 +1,38 @@
+{% import "@ChamiloCore/Macros/box.html.twig" as macro_box %}
+{% import "@ChamiloCore/Macros/actions.html.twig" as macro_actions %}
+{% import "@ChamiloCore/Macros/buttons.html.twig" as macro_buttons %}
+{% import "@ChamiloCore/Macros/image.html.twig" as macro_image %}
+{% import '@ChamiloCore/Macros/headers.html.twig' as macro_headers %}
+{% import '@ChamiloCore/Macros/modals.html.twig' as macro_modals %}
+{% set modals_block = macro_modals.global_modal('') %}
+<!DOCTYPE html>
+<html lang="{{ wcag_locale }}" data-lang="{{ app.request.locale }}" class="no-js h-100">
+{% block chamilo_head %}
+    {%- include "@ChamiloCore/Layout/head.html.twig" %}
+{% endblock %}
+{%- set page_type_classes = page_helper.getPageTypeCssClasses(app.request) -%}
+<body class="font-sans antialiased {{ section_name }} {{ page_type_classes|join(' ') }}"
+      data-in-course="{{ course ? 'true' : 'false' }}"
+      data-course-id="{{ course ? course.id : '' }}"
+      data-session-id="{{ session ? session.id : '' }}"
+>
+<noscript>{{ "Your browser does not support Javascript"|trans }}</noscript>
+{%- block chamilo_wrap -%}
+    <div class="page-marker {{ page_type_classes|join(' ') }}" aria-hidden="true"></div>
+
+    {%- block page_content %}
+    {% endblock %}
+
+{% endblock -%}
+
+{%- block chamilo_footer -%}
+{% endblock -%}
+
+{{ modals_block }}
+
+{# Cookie banner (global) #}
+{% include "@ChamiloCore/Layout/cookie_banner.html.twig" %}
+
+{% include "@ChamiloCore/Layout/foot.html.twig" %}
+</body>
+</html>

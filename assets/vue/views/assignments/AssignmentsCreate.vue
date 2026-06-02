@@ -1,0 +1,62 @@
+<template>
+  <div class="field space-y-2">
+    <BaseButton
+      :label="t('Back')"
+      icon="back"
+      only-icon
+      size="small"
+      type="black"
+      @click="goBack"
+    />
+    <div class="field">
+      <h3 v-text="t('Create assignment')" />
+    </div>
+
+    <AssignmentsForm
+      :is-form-loading="isFormLoading"
+      @submit="onSubmit"
+    />
+  </div>
+</template>
+
+<script setup>
+import AssignmentsForm from "../../components/assignments/AssignmentsForm.vue"
+import { useI18n } from "vue-i18n"
+import { ref } from "vue"
+import cStudentPublicationService from "../../services/cstudentpublication"
+import { getCourseContext } from "../../utils/courseContext"
+import { useNotification } from "../../composables/notification"
+import { useRouter } from "vue-router"
+import BaseButton from "../../components/basecomponents/BaseButton.vue"
+
+const { t } = useI18n()
+const { cid, sid, gid } = getCourseContext()
+const router = useRouter()
+
+const { showSuccessNotification, showErrorNotification } = useNotification()
+
+const isFormLoading = ref(false)
+
+function onSubmit(publicationStudent) {
+  isFormLoading.value = true
+
+  cStudentPublicationService
+    .createPublication(publicationStudent)
+    .then((data) => {
+      console.log("cstudentpublication", data)
+
+      showSuccessNotification(t("Assignment created"))
+
+      goBack()
+    })
+    .catch((error) => showErrorNotification(error))
+    .finally(() => (isFormLoading.value = false))
+}
+
+function goBack() {
+  router.push({
+    name: "AssignmentsList",
+    query: { cid, sid, gid },
+  })
+}
+</script>

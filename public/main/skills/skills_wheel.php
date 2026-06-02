@@ -1,0 +1,106 @@
+<?php
+/* For licensing terms, see /license.txt */
+
+use Chamilo\CoreBundle\Framework\Container;
+use Symfony\Component\HttpFoundation\RedirectResponse;
+
+$cidReset = true;
+
+require_once __DIR__.'/../inc/global.inc.php';
+
+$response = new RedirectResponse(
+    Container::getRouter()->generate('skill_wheel')
+);
+$response->send();
+
+exit;
+
+$this_section = SECTION_PLATFORM_ADMIN;
+
+api_protect_admin_script(false, true);
+SkillModel::isAllowed();
+
+$httpRequest = Container::getRequest();
+
+
+//Adds the JS needed to use the jqgrid
+$htmlHeadXtra[] = api_get_js('d3/d3.v3.5.4.min.js');
+$htmlHeadXtra[] = api_get_js('d3/colorbrewer.js');
+$htmlHeadXtra[] = api_get_js('d3/jquery.xcolor.js');
+
+$tpl = new Template(null, false, false);
+
+$load_user = 0;
+if (isset($_GET['load_user'])) {
+    $load_user = 1;
+}
+
+$skill_condition = '';
+$skillId = $httpRequest->query->getInt('skill_id', 0);
+
+if ($skillId > 0) {
+    $skill_condition = "&skill_id=$skillId";
+}
+$tpl->assign('skill_id_to_load', $skillId);
+
+$url = api_get_path(WEB_AJAX_PATH)."skill.ajax.php?a=get_skills_tree_json&load_user=$load_user";
+$tpl->assign('wheel_url', $url);
+
+$token = Security::get_token();
+$url = api_get_path(WEB_AJAX_PATH).'skill.ajax.php?1=1&sec_token='.$token;
+$tpl->assign('url', $url);
+$tpl->assign('isAdministration', true);
+
+$dialogForm = new FormValidator('form', 'post', null, null, ['id' => 'add_item']);
+$dialogForm->addLabel(
+    get_lang('Name'),
+    Display::tag('p', null, ['id' => 'name', 'class' => 'form-control-static'])
+);
+$dialogForm->addLabel(
+    get_lang('Short code'),
+    Display::tag('p', null, ['id' => 'short_code', 'class' => 'form-control-static'])
+);
+$dialogForm->addLabel(
+    get_lang('Parent'),
+    Display::tag('p', null, ['id' => 'parent', 'class' => 'form-control-static'])
+);
+$dialogForm->addLabel(
+    [get_lang('Assessments'), get_lang('With Certificate')],
+    Display::tag('ul', null, ['id' => 'gradebook', 'class' => 'form-control-static list-unstyled'])
+);
+$dialogForm->addLabel(
+    get_lang('Description'),
+    Display::tag(
+        'p',
+        null,
+        ['id' => 'description', 'class' => 'form-control-static']
+    )
+);
+
+$tpl->assign('dialogForm', $dialogForm->returnForm());
+
+$saveProfileForm = new FormValidator(
+    'form',
+    'post',
+    null,
+    null,
+    ['id' => 'dialog-form-profile']
+);
+$saveProfileForm->addHidden('profile_id', null);
+$saveProfileForm->addText(
+    'name',
+    get_lang('Name'),
+    true,
+    ['id' => 'name_profile']
+);
+$saveProfileForm->addTextarea(
+    'description',
+    get_lang('Description'),
+    ['id' => 'description_profile', 'rows' => 6]
+);
+$tpl->assign('save_profile_form', $saveProfileForm->returnForm());
+$templateName = $tpl->get_template('skill/skill_wheel.tpl');
+$content = $tpl->fetch($templateName);
+
+$tpl->assign('content', $content);
+$tpl->displaySkillLayout();

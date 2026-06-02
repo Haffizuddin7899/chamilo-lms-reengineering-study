@@ -1,0 +1,173 @@
+<?php
+
+/* For licensing terms, see /license.txt */
+
+declare(strict_types=1);
+
+namespace Chamilo\CoreBundle\Helpers;
+
+use Chamilo\CoreBundle\Entity\AccessUrl;
+use Chamilo\CoreBundle\Entity\Plugin as PluginEntity;
+use Chamilo\CoreBundle\Repository\AccessUrlRelPluginRepository;
+use Chamilo\CoreBundle\Repository\PluginRepository;
+use Event;
+use Positioning;
+use Symfony\Component\DependencyInjection\ParameterBag\ParameterBagInterface;
+
+final class PluginHelper
+{
+    /**
+     * @var array<string,string> normalized_title => OriginalTitle
+     */
+    private array $titleMap = [];
+
+    public function __construct(
+        private readonly ParameterBagInterface $parameterBag,
+        private readonly AccessUrlRelPluginRepository $pluginRelRepo,
+        private readonly PluginRepository $pluginRepo,
+        private readonly AccessUrlHelper $accessUrlHelper,
+    ) {
+        $this->titleMap = [];
+    }
+
+    private static function normalize(string $s): string
+    {
+        return strtolower(preg_replace('/[^a-z0-9]/i', '', $s));
+    }
+
+    private function buildTitleMap(): void
+    {
+        if (!empty($this->titleMap)) {
+            return;
+        }
+        $all = $this->pluginRepo->findAll();
+        foreach ($all as $p) {
+            /** @var PluginEntity $p */
+            $title = $p->getTitle();
+            $norm = self::normalize($title);
+            $this->titleMap[$norm] = $title;
+        }
+    }
+
+    private function resolveTitle(string $name): ?string
+    {
+        $this->buildTitleMap();
+
+        $norm = self::normalize($name);
+        if (isset($this->titleMap[$norm])) {
+            return $this->titleMap[$norm];
+        }
+
+        $studly = implode('', array_map('ucfirst', preg_split('/[^a-z0-9]+/i', $name)));
+        $candidates = array_unique([
+            $name,
+            ucfirst(strtolower($name)),
+            strtolower($name),
+            strtoupper($name),
+            $studly,
+            self::normalize($studly),
+        ]);
+
+        foreach ($candidates as $cand) {
+            $normCand = self::normalize((string) $cand);
+            if (isset($this->titleMap[$normCand])) {
+                return $this->titleMap[$normCand];
+            }
+        }
+
+        return null;
+    }
+
+    public function loadLegacyPlugin(string $pluginName): ?object
+    {
+        $name = $this->resolveTitle($pluginName) ?? $pluginName;
+
+        if (class_exists($name) && method_exists($name, 'create')) {
+            return $name::create();
+        }
+
+        return null;
+    }
+
+    public function getPluginSetting(string $pluginName, string $settingKey): mixed
+    {
+        $plugin = $this->loadLegacyPlugin($pluginName);
+
+        if (!$plugin || !method_exists($plugin, 'get')) {
+            return null;
+        }
+
+        return $plugin->get($settingKey);
+    }
+
+    public function isPluginEnabled(string $pluginName): bool
+    {
+        $accessUrl = $this->accessUrlHelper->getCurrent();
+        if (!$accessUrl instanceof AccessUrl) {
+            return false;
+        }
+
+        $realTitle = $this->resolveTitle($pluginName);
+        if (null === $realTitle) {
+            return false;
+        }
+
+        $plugin = $this->pluginRepo->findOneBy(['title' => $realTitle]);
+        if (!$plugin || !$plugin->isInstalled()) {
+            return false;
+        }
+
+        $rel = $this->pluginRelRepo->findOneByPluginName($realTitle, $accessUrl->getId());
+
+        return $rel && $rel->isActive();
+    }
+
+    public function shouldBlockAccessByPositioning(?int $userId, int $courseId, ?int $sessionId): bool
+    {
+        $plugin = Positioning::create();
+
+        if (!$plugin->isEnabled() || !$userId) {
+            return false;
+        }
+
+        if ('true' !== $plugin->get('block_course_if_initial_exercise_not_attempted')) {
+            return false;
+        }
+
+        $initialData = $plugin->getInitialExercise($courseId, $sessionId);
+
+        if (empty($initialData['exercise_id'])) {
+            return false;
+        }
+
+        $results = Event::getExerciseResultsByUser(
+            $userId,
+            (int) $initialData['exercise_id'],
+            $courseId,
+            $sessionId
+        );
+
+        return empty($results);
+    }
+
+    public function getPluginOverrides(string $pluginName): array
+    {
+        if (!$this->parameterBag->has('plugin_settings')) {
+            return [];
+        }
+
+        $pluginSettings = $this->parameterBag->get('plugin_settings');
+
+        $defaults = \is_array($pluginSettings['default'][$pluginName] ?? null)
+            ? $pluginSettings['default'][$pluginName]
+            : [];
+
+        $accessUrl = $this->accessUrlHelper->getCurrent();
+
+        $urlSpecific = $accessUrl && \is_array($pluginSettings[$accessUrl->getId()][$pluginName] ?? null)
+            ? $pluginSettings[$accessUrl->getId()][$pluginName]
+            : [];
+
+        return array_merge($defaults, $urlSpecific);
+    }
+}

@@ -1,0 +1,83 @@
+<template>
+  <div class="friends-invitations">
+    <BaseCard
+      class="bg-white mt-4"
+      plain
+    >
+      <template #header>
+        <div class="px-4 py-2 bg-gray-100 border-b border-gray-300">
+          <h2 class="text-xl font-semibold">{{ title }}</h2>
+        </div>
+      </template>
+      <hr class="my-4" />
+      <div
+        v-if="invitations && invitations.length > 0"
+        class="space-y-4"
+      >
+        <div
+          v-for="invitation in invitations"
+          :key="invitation.id"
+          class="flex items-center p-4 border rounded-lg shadow-sm bg-white"
+        >
+          <img
+            :src="invitation.itemPicture"
+            alt="Item picture"
+            class="w-16 h-16 rounded-full"
+          />
+          <div class="ml-4 flex-grow">
+            <h4 class="text-lg font-semibold">
+              <a
+                :href="'profile.php?u=' + invitation.itemId"
+                class="text-blue-600 hover:underline"
+                >{{ invitation.itemName }}</a
+              >
+            </h4>
+            <p class="text-gray-600">{{ invitation.content }}</p>
+            <span class="text-sm text-gray-500">{{ invitation.date }}</span>
+          </div>
+          <div class="flex space-x-2">
+            <BaseButton
+              v-if="invitation.canAccept"
+              class="ml-2"
+              icon="check"
+              :label="t('Accept')"
+              type="success"
+              @click="emitEvent('accept', invitation.itemId)"
+            />
+            <BaseButton
+              v-if="invitation.canDeny"
+              class="ml-2"
+              icon="times"
+              :label="t('Deny')"
+              type="danger"
+              @click="emitEvent('deny', invitation.itemId)"
+            />
+          </div>
+        </div>
+      </div>
+      <div
+        v-else
+        class="p-4 text-center text-gray-500"
+      >
+        <p>{{ t("No invitations or records found") }}</p>
+      </div>
+    </BaseCard>
+  </div>
+</template>
+
+<script setup>
+import BaseCard from "../basecomponents/BaseCard.vue"
+import BaseButton from "../basecomponents/BaseButton.vue"
+import { useI18n } from "vue-i18n"
+
+const { t } = useI18n()
+const props = defineProps({
+  invitations: Array,
+  title: String,
+})
+const emit = defineEmits(["accept", "deny"])
+
+function emitEvent(event, id) {
+  emit(event, id)
+}
+</script>

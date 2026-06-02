@@ -1,0 +1,10 @@
+{% if grading_electronic.generation_result is defined %}
+    <div
+        class="grading-electronic-generation-result"
+        data-grading-electronic-generation-result="1"
+    >
+        {{ grading_electronic.generation_result|raw }}
+    </div>
+{% elseif grading_electronic.show %}
+    {{ grading_electronic.form_html|raw }}
+{% endif %}

@@ -1,0 +1,166 @@
+<template>
+  <Button
+    v-if="route || toUrl"
+    v-slot="slotProps"
+    :severity="primeSeverityProperty"
+    :variant="primerVariantProperty"
+    as-child
+  >
+    <BaseAppLink
+      :to="route ? route : null"
+      :url="toUrl ? toUrl : null"
+      :class="[
+        slotProps.class,
+        { 'p-button-sm': size === 'small', 'p-button-icon-only': onlyIcon, 'p-disabled': disabled },
+        attrs.class,
+      ]"
+      :title="onlyIcon ? label : undefined"
+    >
+      <span
+        v-if="icon"
+        class="p-button-icon"
+        :class="chamiloIconToClass[icon]"
+      />
+      <span
+        v-if="!onlyIcon"
+        class="p-button-label"
+        v-text="label"
+      />
+    </BaseAppLink>
+  </Button>
+  <Button
+    v-else
+    :aria-label="onlyIcon ? label : undefined"
+    :disabled="disabled"
+    :icon="chamiloIconToClass[icon]"
+    :label="onlyIcon ? undefined : label"
+    :loading="isLoading"
+    :variant="primerVariantProperty"
+    :severity="primeSeverityProperty"
+    :size="size"
+    :title="onlyIcon ? label : undefined"
+    :type="isSubmit ? 'submit' : 'button'"
+    :name="name"
+    :id="id"
+    @click="$emit('click', $event)"
+  />
+</template>
+
+<script setup>
+import Button from "primevue/button"
+import { computed, useAttrs } from "vue"
+import { chamiloIconToClass } from "./ChamiloIcons"
+import { buttonTypeValidator, iconValidator, sizeValidator } from "./validators"
+import BaseAppLink from "./BaseAppLink.vue"
+
+const attrs = useAttrs()
+
+const props = defineProps({
+  label: {
+    type: String,
+    default: "",
+    required: true,
+  },
+  isSubmit: {
+    type: Boolean,
+    required: false,
+    default: () => false,
+  },
+  icon: {
+    type: String,
+    required: true,
+    validator: iconValidator,
+  },
+  type: {
+    type: String,
+    required: false,
+    validator: buttonTypeValidator,
+    default: "primary",
+  },
+  onlyIcon: {
+    type: Boolean,
+    default: false,
+  },
+  size: {
+    type: String,
+    default: "normal",
+    validator: sizeValidator,
+  },
+  disabled: {
+    type: Boolean,
+    required: false,
+    default: false,
+  },
+  isLoading: {
+    type: Boolean,
+    default: false,
+  },
+  popupIdentifier: {
+    type: String,
+    default: "", // This ensures that popupIdentifier is still present
+  },
+  name: {
+    type: String || undefined,
+    required: false,
+    default: undefined,
+  },
+  id: {
+    type: String,
+    required: false,
+    default: undefined,
+  },
+  route: {
+    type: Object,
+    required: false,
+    default: null,
+  },
+  toUrl: {
+    type: String,
+    required: false,
+    default: null,
+  },
+})
+
+defineEmits(["click"])
+
+const primeSeverityProperty = computed(() => {
+  let type = props.type.replace("-text", "")
+
+  if (["primary", "secondary", "success", "danger", "info"].includes(type)) {
+    return type
+  }
+
+  if ("warning" === type) {
+    return "warn"
+  }
+
+  if ("black" === type) {
+    type = "tertiary-alternative"
+  }
+
+  if ("tertiary-alternative" === type) {
+    return "help"
+  }
+
+  if ("tertiary" === type) {
+    return "contrast"
+  }
+
+  return undefined
+})
+
+const primerVariantProperty = computed(() => {
+  if (props.type.endsWith("-text")) {
+    return "text"
+  }
+
+  switch (props.type) {
+    case "primary-alternative":
+    case "tertiary-alternative":
+    case "black":
+      return "outlined"
+    default:
+      return undefined
+  }
+})
+</script>

@@ -1,0 +1,127 @@
+import { computed, ref } from "vue"
+import { useI18n } from "vue-i18n"
+import { useMessageRelUserStore } from "../store/messageRelUserStore"
+import { useSecurityStore } from "../store/securityStore"
+import { usePlatformConfig } from "../store/platformConfig"
+import socialService from "../services/socialService"
+import { useSocialInfo } from "./useSocialInfo"
+import { storeToRefs } from "pinia"
+
+export function useSocialMenuItems() {
+  const { t } = useI18n()
+  const messageRelUserStore = useMessageRelUserStore()
+  const securityStore = useSecurityStore()
+  const platformConfigStore = usePlatformConfig()
+  const invitationsCount = ref(0)
+  const groupLink = ref({ name: "UserGroupShow" })
+
+  const { isCurrentUser } = useSocialInfo()
+  const { user } = storeToRefs(securityStore)
+
+  const messagingEnabled = computed(() => platformConfigStore.getSetting("message.allow_message_tool") === "true")
+
+  const unreadMessagesCount = computed(() => (messagingEnabled.value ? messageRelUserStore.countUnread : 0))
+
+  const globalForumsCourse = computed(() => platformConfigStore.getSetting("forum.global_forums_course_id"))
+  const hideSocialGroupBlock = computed(
+    () => platformConfigStore.getSetting("social.hide_social_groups_block") === "true",
+  )
+  const allowMyFiles = computed(() => platformConfigStore.settings?.["platform.allow_my_files"] !== "false")
+
+  const isValidGlobalForumsCourse = computed(() => {
+    const courseId = globalForumsCourse.value
+    return courseId !== null && courseId !== undefined && courseId > 0
+  })
+
+  const fetchInvitationsCount = async (userId) => {
+    if (!userId) return
+    try {
+      const data = await socialService.getInvitationsCount(userId)
+      invitationsCount.value = data.totalInvitationsCount
+    } catch (error) {
+      console.error("Error fetching invitations count:", error)
+    }
+  }
+
+  const getGroupLink = async () => {
+    try {
+      const data = await socialService.getForumLink()
+      groupLink.value = isValidGlobalForumsCourse.value ? data.go_to : { name: "UserGroupList" }
+    } catch (error) {
+      console.error("Error fetching forum link:", error)
+      groupLink.value = { name: "UserGroupList" }
+    }
+  }
+
+  if (user.value && user.value.id) {
+    fetchInvitationsCount(user.value.id)
+    getGroupLink()
+  }
+
+  const items = computed(() => {
+    const menuItems = []
+
+    // Home
+    menuItems.push({ icon: "mdi mdi-home", label: t("Home"), route: "/social" })
+
+    if (messagingEnabled.value) {
+      menuItems.push({
+        icon: "mdi mdi-email",
+        label: t("Messages"),
+        route: "/resources/messages",
+        badgeCount: unreadMessagesCount.value,
+      })
+    }
+
+    // My friends
+    menuItems.push({
+      icon: "mdi mdi-handshake",
+      label: t("My friends"),
+      route: { name: "UserRelUserList" },
+    })
+
+    if (!hideSocialGroupBlock.value) {
+      menuItems.push({
+        icon: "mdi mdi-group",
+        label: t("Social groups"),
+        route: groupLink.value,
+        isLink: isValidGlobalForumsCourse.value,
+      })
+    }
+
+    // My files
+    if (allowMyFiles.value) {
+      menuItems.push({
+        icon: "mdi mdi-briefcase",
+        label: t("My files"),
+        route: { name: "PersonalFileList", params: { node: securityStore.user.resourceNode.id } },
+      })
+    }
+
+    // Personal data
+    menuItems.push({
+      icon: "mdi mdi-account",
+      label: t("Personal data"),
+      route: "/resources/users/personal_data",
+    })
+
+    if (!isCurrentUser.value) {
+      const othersMenu = [{ icon: "mdi mdi-home", label: t("Home"), route: "/social" }]
+
+      if (messagingEnabled.value) {
+        othersMenu.push({
+          icon: "mdi mdi-email",
+          label: t("Send message"),
+          link: `/main/inc/ajax/user_manager.ajax.php?a=get_user_popup&user_id=${user.value.id}`,
+          isExternal: true,
+        })
+      }
+
+      return othersMenu
+    }
+
+    return menuItems
+  })
+
+  return { items }
+}

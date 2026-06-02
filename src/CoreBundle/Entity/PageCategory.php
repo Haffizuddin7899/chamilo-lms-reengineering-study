@@ -1,0 +1,139 @@
+<?php
+
+declare(strict_types=1);
+
+/* For licensing terms, see /license.txt */
+
+namespace Chamilo\CoreBundle\Entity;
+
+use ApiPlatform\Metadata\ApiResource;
+use ApiPlatform\Metadata\Delete;
+use ApiPlatform\Metadata\Get;
+use ApiPlatform\Metadata\GetCollection;
+use ApiPlatform\Metadata\Post;
+use ApiPlatform\Metadata\Put;
+use Chamilo\CoreBundle\Traits\TimestampableTypedEntity;
+use Doctrine\Common\Collections\ArrayCollection;
+use Doctrine\Common\Collections\Collection;
+use Doctrine\ORM\Mapping as ORM;
+use Symfony\Component\Serializer\Attribute\Groups;
+use Symfony\Component\Validator\Constraints as Assert;
+
+#[ApiResource(
+    operations: [
+        new Get(security: "is_granted('ROLE_USER')"),
+        new Put(security: "is_granted('ROLE_ADMIN')"),
+        new Delete(security: "is_granted('ROLE_ADMIN')"),
+        new GetCollection(security: "is_granted('ROLE_USER')"),
+        new Post(security: "is_granted('ROLE_ADMIN')"),
+    ],
+    normalizationContext: [
+        'groups' => ['page_category:read'],
+    ],
+    denormalizationContext: [
+        'groups' => ['page_category:write'],
+    ]
+)]
+#[ORM\Table(name: 'page_category')]
+#[ORM\Entity]
+class PageCategory
+{
+    use TimestampableTypedEntity;
+
+    public const ADMIN_BLOCKS_CATEGORIES = [
+        'block-admin-users',
+        'block-admin-courses',
+        'block-admin-sessions',
+        'block-admin-gradebook',
+        'block-admin-skills',
+        'block-admin-privacy',
+        'block-admin-settings',
+        'block-admin-platform',
+        'block-admin-chamilo',
+    ];
+
+    public const ANONYMOUS_CATEGORIES = [
+        'faq',
+        'demo',
+        'home',
+        'public',
+        'footer_public',
+        'index',
+    ];
+
+    #[Groups(['page_category:read', 'page_category:write'])]
+    #[ORM\Column(name: 'id', type: 'integer')]
+    #[ORM\Id]
+    #[ORM\GeneratedValue]
+    protected ?int $id = null;
+    #[Assert\NotBlank]
+    #[Groups(['page_category:read', 'page_category:write', 'page:read'])]
+    #[ORM\Column(name: 'title', type: 'string', length: 255)]
+    protected string $title;
+    #[Assert\NotNull]
+    #[ORM\ManyToOne(targetEntity: User::class)]
+    #[ORM\JoinColumn(name: 'creator_id', referencedColumnName: 'id', nullable: true, onDelete: 'CASCADE')]
+    protected User $creator;
+    #[Groups(['page_category:read', 'page_category:write', 'page:read'])]
+    #[Assert\NotBlank]
+    #[ORM\Column(name: 'type', type: 'string')]
+    protected string $type;
+
+    /**
+     * @var Collection<int, Page>
+     */
+    #[ORM\OneToMany(mappedBy: 'category', targetEntity: Page::class, cascade: ['persist'])]
+    protected Collection $pages;
+    public function __construct()
+    {
+        $this->pages = new ArrayCollection();
+    }
+    public function getId(): ?int
+    {
+        return $this->id;
+    }
+    public function getTitle(): string
+    {
+        return $this->title;
+    }
+    public function setTitle(string $title): self
+    {
+        $this->title = $title;
+
+        return $this;
+    }
+    public function getCreator(): User
+    {
+        return $this->creator;
+    }
+    public function setCreator(User $creator): self
+    {
+        $this->creator = $creator;
+
+        return $this;
+    }
+    public function getType(): string
+    {
+        return $this->type;
+    }
+    public function setType(string $type): self
+    {
+        $this->type = $type;
+
+        return $this;
+    }
+
+    /**
+     * @return Collection<int, Page>
+     */
+    public function getPages(): Collection
+    {
+        return $this->pages;
+    }
+    public function setPages(Collection $pages): self
+    {
+        $this->pages = $pages;
+
+        return $this;
+    }
+}

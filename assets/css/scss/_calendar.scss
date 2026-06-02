@@ -1,0 +1,47 @@
+.calendar-event-info {
+  @apply flex flex-col space-y-4;
+
+  .invitations-info {
+    @apply space-y-2;
+
+    &__title {
+      @apply text-gray-50 mb-3;
+    }
+
+    &__item {
+      @apply flex text-body-2 flex-row justify-between;
+
+      p {
+        @apply first:font-semibold;
+      }
+    }
+  }
+
+  .reminders-info {
+    @apply space-y-2;
+
+    &__title {
+      @apply text-gray-50 mb-3;
+    }
+
+    &__list {
+      @apply space-y-2;
+    }
+
+    &__item {
+      @apply flex text-body-2 flex-row gap-2;
+    }
+  }
+}
+.calendar-mode-toggle {
+  @apply inline-flex gap-2;
+}
+.calendar-mode-toggle:deep(.p-togglebutton) {
+  @apply ml-0 rounded-full border border-gray-300 bg-transparent px-4 py-2 font-semibold text-gray-25 transition-colors hover:bg-white/70 hover:text-gray-50 min-w-[10rem] justify-center;
+}
+.calendar-mode-toggle:deep(.p-togglebutton[aria-pressed="true"]) {
+  @apply bg-white text-gray-90 border-gray-25 shadow-sm ring-1 ring-gray-20;
+}
+.p-togglebutton-checked {
+  @apply font-bold underline;
+}

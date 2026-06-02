@@ -1,0 +1,578 @@
+<template>
+  <div class="message-list flex flex-col">
+    <SectionHeader :title="title">
+      <BaseButton
+        icon="email-plus"
+        only-icon
+        type="success"
+        :title="t('New message')"
+        :aria-label="t('New message')"
+        @click="goToCompose"
+      />
+
+      <BaseButton
+        :disabled="isLoading"
+        icon="refresh"
+        only-icon
+        type="black"
+        :title="t('Refresh')"
+        :aria-label="t('Refresh')"
+        @click="refreshMessages"
+      />
+
+      <BaseButton
+        :disabled="0 === selectedItems.length || isLoading"
+        icon="delete"
+        only-icon
+        type="danger"
+        :title="t('Delete')"
+        :aria-label="t('Delete')"
+        @click="showDlgConfirmDeleteMultiple"
+      />
+
+      <BaseButton
+        :disabled="0 === selectedItems.length || isLoading"
+        icon="multiple-marked"
+        only-icon
+        popup-identifier="course-messages-list-tmenu"
+        type="black"
+        :title="t('Mark as')"
+        :aria-label="t('Mark as')"
+        @click="mToggleMessagesList"
+      />
+
+      <BaseMenu
+        id="course-messages-list-tmenu"
+        ref="mMessageList"
+        :model="mItemsMarkAs"
+      />
+    </SectionHeader>
+
+    <div class="overflow-x-auto">
+      <BaseTable
+        ref="dtMessages"
+        v-model:selected-items="selectedItems"
+        :is-loading="isLoading"
+        :row-class="rowClass"
+        :rows="initialRowsPerPage"
+        :sort-order="-1"
+        :total-items="totalItems"
+        :values="items"
+        data-key="@id"
+        lazy
+        sort-field="sendDate"
+        @page="onPage"
+        @sort="sortingChanged"
+      >
+        <template #header>
+          <div class="flex items-center gap-4">
+            <div class="flex items-stretch self-stretch">
+              <button
+                class="px-4 py-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap"
+                :class="
+                  activeFilter === 'inbox'
+                    ? 'border-primary text-primary'
+                    : 'border-transparent text-gray-500 hover:text-gray-800 hover:border-gray-300'
+                "
+                @click="showInbox"
+              >
+                {{ t("Inbox") }}
+              </button>
+              <button
+                class="px-4 py-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap"
+                :class="
+                  activeFilter === 'unread'
+                    ? 'border-primary text-primary'
+                    : 'border-transparent text-gray-500 hover:text-gray-800 hover:border-gray-300'
+                "
+                @click="showUnread"
+              >
+                {{ t("Unread") }}
+              </button>
+              <button
+                class="px-4 py-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap"
+                :class="
+                  activeFilter === 'sent'
+                    ? 'border-primary text-primary'
+                    : 'border-transparent text-gray-500 hover:text-gray-800 hover:border-gray-300'
+                "
+                @click="showSent"
+              >
+                {{ t("Sent") }}
+              </button>
+              <BaseButton
+                v-for="tag in tags"
+                :key="tag.id"
+                :label="tag.tag"
+                icon="tag-outline"
+                type="black"
+                :title="tag.tag"
+                :aria-label="tag.tag"
+                @click="showInboxByTag(tag)"
+              />
+            </div>
+            <form
+              class="flex-1"
+              @submit.prevent="onSearch"
+            >
+              <InputGroup>
+                <InputText
+                  v-model="searchText"
+                  :placeholder="t('Search')"
+                  type="text"
+                />
+                <BaseButton
+                  icon="search"
+                  is-submit
+                  type="primary"
+                  :title="t('Search')"
+                  :aria-label="t('Search')"
+                />
+                <BaseButton
+                  icon="close"
+                  type="primary"
+                  :title="t('Reset')"
+                  :aria-label="t('Reset')"
+                  @click="onResetSearch"
+                />
+              </InputGroup>
+            </form>
+          </div>
+        </template>
+
+        <Column selection-mode="multiple" />
+        <Column :header="showingInbox ? t('From') : t('To')">
+          <template #body="slotProps">
+            <BaseAvatarList
+              v-if="showingInbox && slotProps.data.sender"
+              :users="[slotProps.data.sender]"
+            />
+            <div
+              v-else-if="showingInbox && !slotProps.data.sender"
+              v-text="t('No sender')"
+            />
+            <BaseAvatarList
+              v-else-if="!showingInbox"
+              :users="mapReceiverMixToUsers(slotProps.data)"
+            />
+          </template>
+        </Column>
+
+        <Column
+          :header="t('Title')"
+          :sortable="true"
+          field="title"
+        >
+          <template #body="slotProps">
+            <BaseAppLink
+              :to="{
+                name: 'MessageShow',
+                query: {
+                  id: slotProps.data['@id'],
+                  receiverType: showingInbox ? MESSAGE_TYPE_INBOX : MESSAGE_TYPE_SENDER,
+                },
+              }"
+              :class="['text-primary', { 'font-bold': showingInbox && !findMyReceiver(slotProps.data)?.read }]"
+            >
+              {{ slotProps.data.title }}
+            </BaseAppLink>
+
+            <BaseTag
+              v-for="tag in findMyReceiver(slotProps.data)?.tags"
+              :key="tag.id"
+              :label="tag.tag"
+              type="info"
+            />
+          </template>
+        </Column>
+
+        <Column
+          :header="t('Sent date')"
+          :sortable="true"
+          class="truncate w-24 md:w-auto"
+          field="sendDate"
+        >
+          <template #body="slotProps">
+            {{ abbreviatedDatetime(slotProps.data.sendDate) }}
+          </template>
+        </Column>
+
+        <Column :header="t('Actions')">
+          <template #body="slotProps">
+            <BaseButton
+              icon="delete"
+              size="small"
+              type="danger"
+              :title="t('Delete')"
+              :aria-label="t('Delete')"
+              @click="showDlgConfirmDeleteSingle(slotProps)"
+            />
+          </template>
+        </Column>
+      </BaseTable>
+    </div>
+  </div>
+</template>
+
+<script setup>
+import { computed, onBeforeUnmount, onMounted, ref } from "vue"
+import { useStore } from "vuex"
+import { useI18n } from "vue-i18n"
+import { useRoute, useRouter } from "vue-router"
+import { useFormatDate } from "../../composables/formatDate"
+import BaseButton from "../../components/basecomponents/BaseButton.vue"
+import BaseMenu from "../../components/basecomponents/BaseMenu.vue"
+import BaseAvatarList from "../../components/basecomponents/BaseAvatarList.vue"
+import BaseTable from "../../components/basecomponents/BaseTable.vue"
+import BaseTag from "../../components/basecomponents/BaseTag.vue"
+import Column from "primevue/column"
+import { useConfirmation } from "../../composables/useConfirmation"
+import { MESSAGE_TYPE_INBOX, MESSAGE_TYPE_SENDER } from "../../constants/entity/message"
+import { useNotification } from "../../composables/notification"
+import { useMessageRelUserStore } from "../../store/messageRelUserStore"
+import { useSecurityStore } from "../../store/securityStore"
+import SectionHeader from "../../components/layout/SectionHeader.vue"
+import InputGroup from "primevue/inputgroup"
+import InputText from "primevue/inputtext"
+import messageRelUserService from "../../services/messagereluser"
+import { findAll as findAllMessageTags } from "../../services/messageTagService"
+import { useMessageReceiverFormatter } from "../../composables/message/messageFormatter"
+import { usePlatformConfig } from "../../store/platformConfig"
+
+const route = useRoute()
+const router = useRouter()
+const store = useStore()
+const securityStore = useSecurityStore()
+const { t } = useI18n()
+
+const { requireConfirmation } = useConfirmation()
+const notification = useNotification()
+
+const messageRelUserStore = useMessageRelUserStore()
+
+const { abbreviatedDatetime } = useFormatDate()
+
+const { mapReceiverMixToUsers } = useMessageReceiverFormatter()
+const platformConfigStore = usePlatformConfig()
+const messagingEnabled = computed(() => platformConfigStore.getSetting("message.allow_message_tool") === "true")
+
+const mItemsMarkAs = ref([
+  {
+    label: t("As read"),
+    command: () => {
+      const promises = selectedItems.value.map((message) => {
+        const myReceiver = findMyReceiver(message)
+
+        if (!myReceiver) {
+          return undefined
+        }
+
+        myReceiver.read = true
+
+        return messageRelUserService.update(myReceiver["@id"], myReceiver)
+      })
+
+      Promise.all(promises)
+        .then(() => messageRelUserStore.findUnreadCount())
+        .catch((e) => notification.showErrorNotification(e))
+        .finally(() => (selectedItems.value = []))
+    },
+  },
+  {
+    label: t("As unread"),
+    command: async () => {
+      const promises = selectedItems.value.map((message) => {
+        const myReceiver = findMyReceiver(message)
+
+        if (!myReceiver) {
+          return undefined
+        }
+
+        myReceiver.read = false
+
+        return messageRelUserService.update(myReceiver["@id"], myReceiver)
+      })
+
+      Promise.all(promises)
+        .then(() => messageRelUserStore.findUnreadCount())
+        .catch((e) => notification.showErrorNotification(e))
+        .finally(() => (selectedItems.value = []))
+    },
+  },
+])
+
+const mMessageList = ref(null)
+
+const mToggleMessagesList = (event) => mMessageList.value.toggle(event)
+
+const dtMessages = ref(null)
+const initialRowsPerPage = 10
+
+const goToCompose = () => {
+  router.push({
+    name: "MessageCreate",
+    query: route.query,
+  })
+}
+
+const tags = ref([])
+
+const items = computed(() => store.getters["message/getRecents"])
+const isLoading = computed(() => store.getters["message/isLoading"])
+const totalItems = computed(() => store.getters["message/getTotalItems"])
+
+const title = ref(null)
+
+const selectedTag = ref(null)
+const searchText = ref("")
+
+const selectedItems = ref([])
+
+const rowClass = (data) => {
+  const myReceiver = findMyReceiver(data)
+
+  if (!myReceiver) {
+    return []
+  }
+
+  return [{ "font-semibold": !myReceiver.read }]
+}
+
+let fetchPayload = {}
+
+const rows = ref(10)
+
+function loadMessages(reset = true) {
+  if (reset) {
+    store.dispatch("message/resetList")
+    dtMessages.value.resetPage()
+  }
+
+  fetchPayload.msgType = MESSAGE_TYPE_INBOX
+  fetchPayload.status = 0
+
+  if (selectedTag.value) {
+    fetchPayload["receivers.tags.tag"] = selectedTag.value.tag
+  }
+
+  if (showingInbox.value) {
+    fetchPayload["receivers.receiver"] = securityStore.user["@id"]
+  } else {
+    fetchPayload.sender = securityStore.user["@id"]
+  }
+
+  if (searchText.value) {
+    fetchPayload.search = searchText.value
+  }
+
+  store.dispatch("message/fetchAll", fetchPayload)
+}
+
+const showingInbox = ref(false)
+const activeFilter = ref("inbox")
+
+function showInbox() {
+  showingInbox.value = true
+  activeFilter.value = "inbox"
+  title.value = t("Inbox")
+  selectedTag.value = null
+
+  fetchPayload = {
+    "order[sendDate]": "desc",
+    itemsPerPage: initialRowsPerPage,
+    page: 1,
+    "receivers.receiver": securityStore.user["@id"],
+    "receivers.receiverType": MESSAGE_TYPE_INBOX,
+    "exists[receivers.deletedAt]": false,
+  }
+
+  loadMessages()
+}
+
+function showInboxByTag(tag) {
+  showingInbox.value = true
+  title.value = tag.tag
+  selectedTag.value = tag
+
+  fetchPayload = {
+    "order[sendDate]": "desc",
+    "receivers.receiver": securityStore.user["@id"],
+    itemsPerPage: initialRowsPerPage,
+    page: 1,
+    "receivers.receiverType": MESSAGE_TYPE_INBOX,
+    "exists[receivers.deletedAt]": false,
+  }
+
+  loadMessages()
+}
+
+function showUnread() {
+  showingInbox.value = true
+  activeFilter.value = "unread"
+  title.value = t("Unread")
+  selectedTag.value = null
+
+  fetchPayload = {
+    "order[sendDate]": "desc",
+    "receivers.receiver": securityStore.user["@id"],
+    "receivers.read": false,
+    itemsPerPage: initialRowsPerPage,
+    page: 1,
+    "receivers.receiverType": MESSAGE_TYPE_INBOX,
+    "exists[receivers.deletedAt]": false,
+  }
+
+  loadMessages()
+}
+
+function showSent() {
+  showingInbox.value = false
+  activeFilter.value = "sent"
+  title.value = t("Sent")
+  selectedTag.value = null
+
+  fetchPayload = {
+    sender: securityStore.user["@id"],
+    "receivers.receiverType": MESSAGE_TYPE_SENDER,
+    "exists[receivers.deletedAt]": false,
+    "order[sendDate]": "desc",
+    itemsPerPage: initialRowsPerPage,
+    page: 1,
+  }
+
+  loadMessages()
+}
+
+function refreshMessages() {
+  fetchPayload.itemsPerPage = initialRowsPerPage
+  fetchPayload.page = 1
+  fetchPayload["exists[receivers.deletedAt]"] = false
+
+  loadMessages()
+}
+
+function onPage(event) {
+  delete fetchPayload["order[title]"]
+  delete fetchPayload["order[sendDate]"]
+
+  fetchPayload.page = event.page + 1
+  fetchPayload.itemsPerPage = event.rows
+  fetchPayload[`order[${event.sortField}]`] = event.sortOrder === -1 ? "desc" : "asc"
+
+  loadMessages(false)
+}
+
+function sortingChanged(event) {
+  delete fetchPayload["order[title]"]
+  delete fetchPayload["order[sendDate]"]
+
+  fetchPayload[`order[${event.sortField}]`] = event.sortOrder === -1 ? "desc" : "asc"
+
+  loadMessages(true)
+}
+
+function findMyReceiver(message, receiverType = showingInbox.value ? MESSAGE_TYPE_INBOX : MESSAGE_TYPE_SENDER) {
+  const receivers = [...message.receiversTo, ...message.receiversCc, ...message.receiversSender]
+  return receivers.find(({ receiver, receiverType: type }) => {
+    const isSelf = receiver["@id"] === securityStore.user["@id"]
+    return isSelf && type === receiverType
+  })
+}
+
+async function deleteMessage(message) {
+  try {
+    const myReceiver = findMyReceiver(message)
+
+    if (myReceiver) {
+      await store.dispatch("messagereluser/del", myReceiver)
+
+      notification.showSuccessNotification(t("Message deleted"))
+    }
+    await messageRelUserStore.findUnreadCount()
+    loadMessages()
+  } catch (e) {
+    notification.showErrorNotification(t("Error deleting message"))
+  }
+}
+
+function showDlgConfirmDeleteSingle(dataOrItem) {
+  const item = dataOrItem.data || dataOrItem
+
+  requireConfirmation({
+    message: t("Are you sure you want to delete {0}?", [item.title]),
+    accept: async () => {
+      await deleteMessage(item)
+    },
+  })
+}
+
+function showDlgConfirmDeleteMultiple() {
+  requireConfirmation({
+    message: t("Are you sure you want to delete the selected items?"),
+    accept: async () => {
+      for (const message of selectedItems.value) {
+        await deleteMessage(message)
+      }
+      selectedItems.value = []
+      loadMessages()
+    },
+  })
+}
+
+onMounted(() => {
+  if (!messagingEnabled.value) {
+    router.replace("/social")
+    return
+  }
+  showInbox()
+})
+
+function onSearch() {
+  fetchPayload = {
+    "order[sendDate]": "desc",
+    itemsPerPage: initialRowsPerPage,
+    page: 1,
+  }
+
+  loadMessages()
+}
+
+function onResetSearch() {
+  searchText.value = ""
+
+  fetchPayload = {
+    "order[sendDate]": "desc",
+    itemsPerPage: initialRowsPerPage,
+    page: 1,
+  }
+
+  loadMessages()
+}
+
+findAllMessageTags({ pagination: false })
+  .then((messageTags) => (tags.value = messageTags))
+  .catch(notification.showErrorNotification)
+
+let onMessageRead
+
+onMounted(() => {
+  onMessageRead = (ev) => {
+    const { iri, receiverId, receiverType } = ev.detail || {}
+    const msg = items.value?.find?.((m) => m["@id"] === iri)
+    if (!msg) return
+
+    const receivers = [...msg.receiversTo, ...msg.receiversCc, ...msg.receiversSender]
+    const mine = receivers.find((r) => r.receiver?.["@id"] === receiverId && r.receiverType === receiverType)
+    if (mine) {
+      mine.read = true
+    }
+  }
+  window.addEventListener("message:read", onMessageRead)
+})
+
+onBeforeUnmount(() => {
+  if (onMessageRead) {
+    window.removeEventListener("message:read", onMessageRead)
+  }
+})
+</script>

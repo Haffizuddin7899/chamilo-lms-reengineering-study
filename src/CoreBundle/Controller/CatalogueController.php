@@ -1,0 +1,421 @@
+<?php
+
+/* For licensing terms, see /license.txt */
+
+declare(strict_types=1);
+
+namespace Chamilo\CoreBundle\Controller;
+
+use BuyCoursesPlugin;
+use Chamilo\CoreBundle\Entity\Admin;
+use Chamilo\CoreBundle\Entity\CatalogueSessionRelAccessUrlRelUsergroup;
+use Chamilo\CoreBundle\Entity\Course;
+use Chamilo\CoreBundle\Entity\Session;
+use Chamilo\CoreBundle\Entity\User;
+use Chamilo\CoreBundle\Entity\UsergroupRelUser;
+use Chamilo\CoreBundle\Entity\UserRelCourseVote;
+use Chamilo\CoreBundle\Helpers\AccessUrlHelper;
+use Chamilo\CoreBundle\Helpers\CourseHelper;
+use Chamilo\CoreBundle\Helpers\UserHelper;
+use Chamilo\CoreBundle\Repository\SessionRepository;
+use Chamilo\CoreBundle\Repository\TrackECourseAccessRepository;
+use Chamilo\CoreBundle\Repository\UserRelCourseVoteRepository;
+use Chamilo\CoreBundle\Settings\SettingsManager;
+use DateTime;
+use Doctrine\ORM\EntityManagerInterface;
+use ExtraField;
+use stdClass;
+use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
+use Symfony\Component\HttpFoundation\JsonResponse;
+use Symfony\Component\HttpFoundation\Request;
+use Symfony\Component\Routing\Attribute\Route;
+use Symfony\Component\Security\Http\Attribute\IsGranted;
+
+#[Route('/catalogue')]
+class CatalogueController extends AbstractController
+{
+    public function __construct(
+        private readonly EntityManagerInterface $em,
+        private readonly UserHelper $userHelper,
+        private readonly AccessUrlHelper $accessUrlHelper,
+        private readonly SessionRepository $sessionRepository,
+        private readonly UserRelCourseVoteRepository $courseVoteRepository,
+        private readonly CourseHelper $courseHelper,
+    ) {}
+
+    #[IsGranted('ROLE_USER')]
+    #[Route('/api/courses/{id}/rating', name: 'api_course_rating', methods: ['GET'])]
+    public function courseRating(Course $course, Request $request): JsonResponse
+    {
+        $sessionId = $request->query->getInt('session', 0);
+        $session = $sessionId > 0 ? $this->sessionRepository->find($sessionId) : null;
+        $rating = $this->courseVoteRepository->getCouseRating($course, $session);
+
+        return $this->json($rating);
+    }
+
+    #[IsGranted('ROLE_USER')]
+    #[Route('/api/courses/{id}/visits', name: 'api_course_visits', methods: ['GET'])]
+    public function courseVisits(Course $course, Request $request, TrackECourseAccessRepository $courseAccessRepository): JsonResponse
+    {
+        $sessionId = $request->query->getInt('session', 0);
+        $session = $sessionId > 0 ? $this->sessionRepository->find($sessionId) : null;
+        $count = $courseAccessRepository->getCourseVisits($course, $session);
+
+        return $this->json(['visits' => $count]);
+    }
+
+    #[Route('/api/course-subscription-statuses', name: 'chamilo_core_catalogue_course_subscription_statuses', methods: ['GET'])]
+    public function courseSubscriptionStatuses(Request $request): JsonResponse
+    {
+        $ids = array_values(array_filter(array_map('intval', explode(',', (string) $request->query->get('ids', '')))));
+        if ([] === $ids) {
+            return $this->json(new stdClass());
+        }
+
+        $courses = $this->em->getRepository(Course::class)->findBy(['id' => $ids]);
+        $infoMap = $this->courseHelper->getCourseSubscriptionLimitInfoMap($courses, 1);
+
+        return $this->json($infoMap);
+    }
+
+    #[Route('/sessions-list', name: 'chamilo_core_catalogue_sessions_list', methods: ['GET'])]
+    public function listSessions(): JsonResponse
+    {
+        $user = $this->userHelper->getCurrent();
+        $accessUrl = $this->accessUrlHelper->getCurrent();
+
+        $relRepo = $this->em->getRepository(CatalogueSessionRelAccessUrlRelUsergroup::class);
+        $userGroupRepo = $this->em->getRepository(UsergroupRelUser::class);
+        $voteRepo = $this->em->getRepository(UserRelCourseVote::class);
+
+        $relations = $relRepo->findBy(['accessUrl' => $accessUrl]);
+
+        if (empty($relations)) {
+            $sessions = $this->sessionRepository->findAll();
+        } else {
+            $userGroups = $userGroupRepo->findBy(['user' => $user]);
+            $userGroupIds = array_map(fn ($ug) => $ug->getUsergroup()->getId(), $userGroups);
+
+            $visibleSessions = [];
+
+            foreach ($relations as $rel) {
+                $session = $rel->getSession();
+                $usergroup = $rel->getUsergroup();
+
+                if (null === $usergroup || \in_array($usergroup->getId(), $userGroupIds, true)) {
+                    $visibleSessions[$session->getId()] = $session;
+                }
+            }
+
+            $sessions = array_values($visibleSessions);
+        }
+
+        $data = array_map(function (Session $session) use ($voteRepo, $user) {
+            $courses = [];
+
+            foreach ($session->getCourses() as $rel) {
+                $course = $rel->getCourse();
+                if (!$course) {
+                    continue;
+                }
+
+                $teachers = [];
+                foreach ($session->getGeneralCoachesSubscriptions() as $coachRel) {
+                    $userObj = $coachRel->getUser();
+                    if ($userObj) {
+                        $teachers[] = [
+                            'id' => $userObj->getId(),
+                            'fullName' => $userObj->getFullName(),
+                        ];
+                    }
+                }
+
+                $courses[] = [
+                    'id' => $course->getId(),
+                    'title' => $course->getTitle(),
+                    'duration' => $course->getDuration(),
+                    'courseLanguage' => $course->getCourseLanguage(),
+                    'teachers' => $teachers,
+                ];
+            }
+
+            $voteCount = (int) $voteRepo->createQueryBuilder('v')
+                ->select('COUNT(DISTINCT v.user)')
+                ->where('v.session = :session')
+                ->andWhere('v.course IS NULL')
+                ->setParameter('session', $session->getId())
+                ->getQuery()
+                ->getSingleScalarResult()
+            ;
+
+            $buyCoursesPlugin = BuyCoursesPlugin::create();
+            $buyData = $buyCoursesPlugin->getBuyCoursePluginPrice($session);
+            $isSubscribed = ($user instanceof User) ? $session->hasUserInSession($user, Session::STUDENT) : false;
+
+            return [
+                'id' => $session->getId(),
+                'title' => $session->getTitle(),
+                'description' => $session->getDescription(),
+                'imageUrl' => $session->getImageUrl(),
+                'visibility' => $session->getVisibility(),
+                'nbrUsers' => $session->getNbrUsers(),
+                'nbrCourses' => $session->getNbrCourses(),
+                'startDate' => $session->getAccessStartDate()?->format('Y-m-d'),
+                'endDate' => $session->getAccessEndDate()?->format('Y-m-d'),
+                'courses' => $courses,
+                'popularity' => $voteCount,
+                'isSubscribed' => $isSubscribed,
+                'priceHtml' => $buyData['html'] ?? '',
+                'buyButtonHtml' => $buyData['buy_button'] ?? '',
+            ];
+        }, $sessions);
+
+        return $this->json($data);
+    }
+
+    private function readCatalogueSettings(SettingsManager $settingsManager): array
+    {
+        $raw = $settingsManager->getSetting('catalog.course_catalog_settings');
+        if (empty($raw)) {
+            return [];
+        }
+
+        if (\is_string($raw)) {
+            $raw = json_decode($raw, true) ?? [];
+        }
+
+        if (isset($raw['courses']) && \is_array($raw['courses'])) {
+            return $raw['courses'];
+        }
+
+        return \is_array($raw) ? $raw : [];
+    }
+
+    #[IsGranted('ROLE_USER')]
+    #[Route('/course-extra-fields', name: 'chamilo_core_catalogue_course_extra_fields', methods: ['GET'])]
+    public function getCourseExtraFields(SettingsManager $settingsManager): JsonResponse
+    {
+        $settings = $this->readCatalogueSettings($settingsManager);
+        if (empty($settings)) {
+            return $this->json([]);
+        }
+
+        $allowed = array_map('strval', $settings['extra_fields_in_search_form'] ?? []);
+
+        if (empty($allowed)) {
+            return $this->json([]);
+        }
+
+        $ef = new ExtraField('course');
+        $raw = $ef->get_all(
+            [
+                'filter = ?' => 1,
+                ' AND visible_to_self = ?' => 1,
+                ' AND variable IN (?'.str_repeat(', ?', \count($allowed) - 1).')' => $allowed,
+            ],
+            'option_order'
+        );
+
+        $mapped = array_map(function ($f) {
+            $type = (int) $f['value_type'];
+
+            $base = [
+                'variable' => (string) $f['variable'],
+                'title' => (string) ($f['display_text'] ?? $f['variable']),
+                'value_type' => $type,
+                'defaultValue' => $f['field_default_value'] ?? null,
+            ];
+
+            $options = [];
+            if (!empty($f['options']) && \is_array($f['options'])) {
+                foreach ($f['options'] as $opt) {
+                    $options[] = [
+                        'id' => isset($opt['id']) ? (int) $opt['id'] : 0,
+                        'value' => isset($opt['option_value']) ? (string) $opt['option_value'] : (string) ($opt['id'] ?? ''),
+                        'label' => (string) ($opt['display_text'] ?? $opt['option_value'] ?? ''),
+                        'parent' => isset($opt['parent_id']) ? (int) $opt['parent_id'] : 0,
+                    ];
+                }
+            }
+
+            $typesWithOptions = [
+                ExtraField::FIELD_TYPE_SELECT,
+                ExtraField::FIELD_TYPE_SELECT_MULTIPLE,
+                ExtraField::FIELD_TYPE_DOUBLE_SELECT,
+                ExtraField::FIELD_TYPE_TRIPLE_SELECT,
+                ExtraField::FIELD_TYPE_SELECT_WITH_TEXT_FIELD,
+                ExtraField::FIELD_TYPE_RADIO,
+                ExtraField::FIELD_TYPE_CHECKBOX,
+                ExtraField::FIELD_TYPE_TAG,
+            ];
+
+            if (\in_array($type, $typesWithOptions, true)) {
+                $base['options'] = $options;
+            }
+
+            return $base;
+        }, $raw);
+
+        $byVar = [];
+        foreach ($mapped as $row) {
+            $byVar[$row['variable']] = $row;
+        }
+
+        $ordered = [];
+        foreach ($allowed as $var) {
+            if (isset($byVar[$var])) {
+                $ordered[] = $byVar[$var];
+            }
+        }
+
+        return $this->json(array_values($ordered));
+    }
+
+    #[IsGranted('ROLE_USER')]
+    #[Route('/course-extra-field-values', name: 'chamilo_core_catalogue_course_extra_field_values', methods: ['GET'])]
+    public function getCourseExtraFieldValues(Request $request, SettingsManager $settingsManager): JsonResponse
+    {
+        $ids = array_filter(array_map('intval', explode(',', (string) $request->query->get('ids', ''))));
+        if (!$ids) {
+            return $this->json(new stdClass());
+        }
+
+        $settings = $this->readCatalogueSettings($settingsManager);
+
+        $allowedSearch = array_map('strval', $settings['extra_fields_in_search_form'] ?? []);
+        $allowedCard = array_map('strval', $settings['extra_fields_in_course_block'] ?? []);
+        $allowedVars = array_values(array_unique(array_filter(array_merge($allowedSearch, $allowedCard))));
+
+        $allowedVars = array_values(array_unique(array_merge($allowedVars, ['video_url', 'special_course'])));
+
+        if (!$allowedVars) {
+            return $this->json(new stdClass());
+        }
+
+        $ef = new ExtraField('course');
+
+        $allFields = $ef->get_all(['filter = ?' => 1, 'AND visible_to_self = ?' => 1], 'option_order');
+        $byVar = [];
+        $byId = [];
+
+        foreach ($allFields as $f) {
+            $var = (string) ($f['variable'] ?? '');
+            if (!$var) {
+                continue;
+            }
+
+            $type = (int) ($f['value_type'] ?? 0);
+            $default = $f['field_default_value'] ?? null;
+
+            $byVar[$var] = [
+                'id' => (int) ($f['id'] ?? 0),
+                'value_type' => $type,
+                'default_raw' => $default,
+            ];
+
+            if (!empty($f['id'])) {
+                $byId[(int) $f['id']] = $var;
+            }
+        }
+
+        foreach ($allowedVars as $var) {
+            if (!isset($byVar[$var])) {
+                $byVar[$var] = [
+                    'id' => 0,
+                    'value_type' => 0,
+                    'default_raw' => null,
+                ];
+            }
+        }
+
+        $out = [];
+
+        foreach ($ids as $courseId) {
+            $out[$courseId] = $ef->getDataAndFormattedValues($courseId, false, array_keys($byVar));
+        }
+
+        return $this->json($out);
+    }
+
+    #[IsGranted('ROLE_USER')]
+    #[Route('/auto-subscribe-course/{courseId}', name: 'chamilo_core_catalogue_auto_subscribe_course', methods: ['POST'])]
+    public function autoSubscribeCourse(int $courseId, SettingsManager $settings): JsonResponse
+    {
+        $user = $this->userHelper->getCurrent();
+        $course = $this->em->getRepository(Course::class)->find($courseId);
+
+        if (!$user || !$course) {
+            return $this->json(['error' => 'Course or user not found'], 400);
+        }
+
+        $isPrivileged = $this->isGranted('ROLE_ADMIN') || $this->isGranted('ROLE_SESSION_ADMIN');
+        if (!$course->getAllowSelfSignup() && !$isPrivileged) {
+            return $this->json(['error' => 'Self sign up not allowed for this course'], 403);
+        }
+
+        $limitInfo = $this->courseHelper->getCourseSubscriptionLimitInfo($course, 1);
+        if (!(bool) $limitInfo['canSubscribe']) {
+            return $this->json([
+                'error' => $limitInfo['subscriptionLimitTooltip'],
+                'code' => 'course_user_limit_reached',
+                'limitInfo' => $limitInfo,
+            ], 409);
+        }
+
+        $useAutoSession = 'true' === $settings->getSetting('catalog.course_subscription_in_user_s_session', true);
+
+        $session = null;
+
+        if ($useAutoSession) {
+            $session = new Session();
+            $timestamp = (new DateTime())->format('Ymd_His');
+            $sessionTitle = \sprintf('%s %s - Session %s', $user->getFirstname(), $user->getLastname(), $timestamp);
+            $session->setTitle($sessionTitle);
+
+            $session->setAccessStartDate(new DateTime());
+            $session->setAccessEndDate(null);
+            $session->setCoachAccessEndDate(null);
+            $session->setDisplayEndDate(null);
+            $session->setSendSubscriptionNotification(false);
+
+            $adminIdSetting = $settings->getSetting('session.session_automatic_creation_user_id');
+            $adminId = null;
+
+            if (is_numeric($adminIdSetting) && (int) $adminIdSetting > 0) {
+                $adminUser = $this->em->getRepository(User::class)->find((int) $adminIdSetting);
+                if ($adminUser) {
+                    $adminId = $adminUser->getId();
+                }
+            }
+
+            if (!$adminId) {
+                $adminEntity = $this->em->getRepository(Admin::class)->findOneBy([]);
+                if ($adminEntity) {
+                    $adminId = $adminEntity->getUser()->getId();
+                }
+            }
+
+            if ($adminId) {
+                $adminUser = $this->em->getRepository(User::class)->find($adminId);
+                if ($adminUser) {
+                    $session->addSessionAdmin($adminUser);
+                }
+            }
+
+            $session->addUserInSession(Session::STUDENT, $user);
+            $session->addAccessUrl($this->accessUrlHelper->getCurrent());
+            $session->addCourse($course);
+            $session->addUserInCourse(Session::STUDENT, $user, $course);
+
+            $this->em->persist($session);
+            $this->em->flush();
+        }
+
+        return $this->json([
+            'message' => 'User subscribed successfully.',
+            'sessionId' => $session?->getId(),
+            'limitInfo' => $this->courseHelper->getCourseSubscriptionLimitInfo($course, 1),
+        ]);
+    }
+}

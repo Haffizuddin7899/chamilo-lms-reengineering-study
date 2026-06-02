@@ -1,0 +1,244 @@
+<?php
+
+/* For licensing terms, see /license.txt */
+
+use Chamilo\CoreBundle\Entity\Skill;
+use Chamilo\CoreBundle\Framework\Container;
+
+/**
+ * Show the skills report.
+ *
+ * @author Angel Fernando Quiroz Campos <angel.quiroz@beeznest.com>
+ */
+require_once __DIR__.'/../inc/global.inc.php';
+
+$userId = (int) api_get_user_id();
+$action = (string) ($_GET['a'] ?? '');
+
+/**
+ * IMPORTANT:
+ * Handle lightweight actions BEFORE any access checks and role-based redirects.
+ * These actions are used by the Vue topbar and must never hit skills_wheel.php.
+ */
+if ('has_custom_certificate' === $action) {
+    header('Content-Type: application/json; charset=UTF-8');
+
+    // We don't need the session for this read-only check.
+    session_write_close();
+
+    try {
+        require_once api_get_path(SYS_CODE_PATH).'gradebook/lib/GradebookUtils.php';
+
+        $myCertificate = GradebookUtils::get_certificate_by_user_id(0, $userId);
+
+        echo json_encode([
+            'hasCustomCertificate' => !empty($myCertificate),
+        ]);
+    } catch (Throwable $e) {
+        // Fail-closed: do not expose errors, and do not show the link in UI.
+        echo json_encode([
+            'hasCustomCertificate' => false,
+        ]);
+    }
+
+    exit;
+}
+
+/**
+ * Handle custom certificate generation BEFORE any role-based redirects.
+ * This prevents admins (or other roles) from being redirected to skills_wheel.php
+ * when they only want to generate the PDF.
+ */
+if ('generate_custom_skill' === $action) {
+    // PDF generation does not require an open session.
+    session_write_close();
+
+    $certificate = new Certificate(0, $userId, false, false);
+    $certificate->generatePdfFromCustomCertificate();
+    exit;
+}
+
+SkillModel::isAllowed($userId);
+
+$isStudent = api_is_student();
+$isStudentBoss = api_is_student_boss();
+$isDRH = api_is_drh();
+
+$em = Database::getManager();
+
+if (!$isStudent && !$isStudentBoss && !$isDRH) {
+    header('Location: '.api_get_path(WEB_CODE_PATH).'social/skills_wheel.php');
+    exit;
+}
+
+switch ($action) {
+    case 'generate':
+        Certificate::generateUserSkills($userId);
+        Display::addFlash(Display::return_message(get_lang('Update successful')));
+        header('Location: '.api_get_self());
+        exit;
+        break;
+}
+
+$skillTable = Database::get_main_table(TABLE_MAIN_SKILL);
+$skillRelUserTable = Database::get_main_table(TABLE_MAIN_SKILL_REL_USER);
+$courseTable = Database::get_main_table(TABLE_MAIN_COURSE);
+$tableRows = [];
+$objSkill = new SkillModel();
+$tpl = new Template(get_lang('Skills'));
+$tplPath = null;
+
+$tpl->assign('allow_skill_tool', 'true' === api_get_setting('allow_skills_tool'));
+$tpl->assign('allow_drh_skills_management', 'true' === api_get_setting('allow_hr_skills_management'));
+
+if ($isStudent) {
+    $result = $objSkill->getUserSkillsTable($userId);
+    $tableRows = $result['skills'];
+    $tpl->assign('skill_table', $result['table']);
+    $tplPath = 'skill/student_report.html.twig';
+} elseif ($isStudentBoss) {
+    $tableRows = [];
+    $followedStudents = UserManager::getUsersFollowedByStudentBoss($userId);
+
+    $frmStudents = new FormValidator('students', 'get');
+    $slcStudent = $frmStudents->addSelect(
+        'student',
+        get_lang('Learner'),
+        ['0' => get_lang('Select')]
+    );
+    $frmStudents->addButtonSearch(get_lang('Search'));
+
+    foreach ($followedStudents as &$student) {
+        $student['completeName'] = api_get_person_name($student['firstname'], $student['lastname']);
+
+        $slcStudent->addOption($student['completeName'], $student['user_id']);
+    }
+
+    if ($frmStudents->validate()) {
+        $selectedStudent = (int) $frmStudents->exportValue('student');
+
+        $sql = "SELECT s.id AS skill_id9i, sru.acquired_skill_at, c.title, c.directory, c.id as course_id
+                FROM $skillTable s
+                INNER JOIN $skillRelUserTable sru
+                ON s.id = sru.skill_id
+                LEFT JOIN $courseTable c
+                ON sru.course_id = c.id
+                WHERE sru.user_id = $selectedStudent
+                ";
+
+        $result = Database::query($sql);
+
+        while ($resultData = Database::fetch_assoc($result)) {
+            $skill = $em->find(Skill::class, $resultData['skill_id']);
+
+            $tableRow = [
+                'complete_name' => $followedStudents[$selectedStudent]['completeName'],
+                'skill_name' => $skill->getTitle(),
+                'achieved_at' => api_format_date($resultData['acquired_skill_at'], DATE_FORMAT_NUMBER),
+                'course_image' => Display::return_icon(
+                    'course.png',
+                    null,
+                    null,
+                    ICON_SIZE_MEDIUM,
+                    null,
+                    true
+                ),
+                'course_name' => $resultData['title'],
+            ];
+
+            $courseEntity = api_get_course_entity($resultData['course_id']);
+            $illustrationUrl = Container::getIllustrationRepository()->getIllustrationUrl($courseEntity);
+            if ($illustrationUrl) {
+                $tableRow['course_image'] = $illustrationUrl;
+            }
+            $tableRows[] = $tableRow;
+        }
+    }
+
+    $tplPath = 'skill/student_boss_report.tpl';
+    $tpl->assign('form', $frmStudents->returnForm());
+} elseif ($isDRH) {
+    $selectedCourse = isset($_REQUEST['course']) ? intval($_REQUEST['course']) : null;
+    $selectedSkill = isset($_REQUEST['skill']) ? intval($_REQUEST['skill']) : 0;
+    $action = null;
+    if (!empty($selectedCourse)) {
+        $action = 'filterByCourse';
+    } elseif (!empty($selectedSkill)) {
+        $action = 'filterBySkill';
+    }
+
+    $courses = CourseManager::getCoursesFollowedByUser($userId, DRH);
+
+    $tableRows = [];
+    $reportTitle = null;
+    $skills = $objSkill->getAllSkills();
+
+    switch ($action) {
+        case 'filterByCourse':
+            $course = api_get_course_info_by_id($selectedCourse);
+            $reportTitle = sprintf(get_lang('Skills acquired in course %s'), $course['name']);
+            $tableRows = $objSkill->listAchievedByCourse($selectedCourse);
+            break;
+        case 'filterBySkill':
+            $skill = $objSkill->get($selectedSkill);
+            $reportTitle = sprintf(get_lang('Students who acquired skill %s'), $skill['name']);
+            $students = UserManager::getUsersFollowedByUser(
+                $userId,
+                STUDENT,
+                false,
+                false,
+                false,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                DRH
+            );
+
+            $coursesFilter = [];
+            foreach ($courses as $course) {
+                $coursesFilter[] = $course['id'];
+            }
+
+            $tableRows = $objSkill->listUsersWhoAchieved($selectedSkill, $coursesFilter);
+            break;
+    }
+
+    foreach ($tableRows as &$row) {
+        $row['complete_name'] = api_get_person_name($row['firstname'], $row['lastname']);
+        $row['achieved_at'] = api_format_date($row['acquired_skill_at'], DATE_FORMAT_NUMBER);
+        $row['course_image'] = Display::return_icon(
+            'course.png',
+            null,
+            null,
+            ICON_SIZE_MEDIUM,
+            null,
+            true
+        );
+
+        $courseEntity = api_get_course_entity($row['real_id']);
+        $illustrationUrl = Container::getIllustrationRepository()->getIllustrationUrl($courseEntity);
+        if ($illustrationUrl) {
+            $row['course_image'] = $illustrationUrl;
+        }
+    }
+
+    $tplPath = 'skill/drh_report.tpl';
+    $tpl->assign('action', $action);
+    $tpl->assign('courses', $courses);
+    $tpl->assign('skills', $skills);
+    $tpl->assign('selected_course', $selectedCourse);
+    $tpl->assign('selected_skill', $selectedSkill);
+    $tpl->assign('report_title', $reportTitle);
+}
+
+if (empty($tableRows)) {
+    Display::addFlash(Display::return_message(get_lang('No results found')));
+}
+$tpl->assign('rows', $tableRows);
+$templateName = $tpl->get_template($tplPath);
+$contentTemplate = $tpl->fetch($templateName);
+$tpl->assign('content', $contentTemplate);
+$tpl->display_one_col_template();

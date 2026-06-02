@@ -1,0 +1,7 @@
+.p-skeleton {
+  @apply overflow-hidden bg-gray-25 rounded-lg animate-pulse;
+
+  &-circle {
+    @apply rounded-full;
+  }
+}

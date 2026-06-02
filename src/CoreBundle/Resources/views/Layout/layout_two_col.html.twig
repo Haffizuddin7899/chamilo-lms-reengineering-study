@@ -1,0 +1,14 @@
+{% extends '@ChamiloCore/Layout/layout_one_col.html.twig' %}
+{%- block content %}
+
+    {%- autoescape false %}
+    <div class="grid md:grid-cols-3 gap-4">
+        <div>
+            {{ left }}
+        </div>
+        <div class="md:col-span-2">
+            {{ right }}
+        </div>
+    </div>
+    {% endautoescape %}
+{% endblock -%}

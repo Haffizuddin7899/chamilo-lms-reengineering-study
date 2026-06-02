@@ -1,0 +1,121 @@
+# This YAML file defines the configuration for the available user authentication methods in Chamilo LMS v2, organized by access URL.
+# Read more https://github.com/chamilo/chamilo-lms/wiki/External-Authentication-configuration
+parameters:
+    authentication:
+        default:
+            oauth2:
+                generic:
+                    enabled: false
+                    title: 'External'
+                    force_as_login_method: false
+                    client_id: ''
+                    client_secret: ''
+                    provider_options:
+                        urlAuthorize: ''
+                        urlAccessToken: ''
+                        urlResourceOwnerDetails: ''
+                        responseResourceOwnerId: 'sub'
+                    allow_create_new_users: true
+                    allow_update_user_info: false
+                    resource_owner_username_field: null
+                    resource_owner_firstname_field: null
+                    resource_owner_lastname_field: null
+                    resource_owner_email_field: null
+                    resource_owner_status_field: null
+                    resource_owner_teacher_status_field: null
+                    resource_owner_sessadmin_status_field: null
+                    resource_owner_hr_status_field: null
+                    resource_owner_student_status_field: null
+                    resource_owner_anon_status_field: null
+                    resource_owner_urls_field: null
+
+                facebook:
+                    enabled: false
+                    title: 'Facebook'
+                    force_as_login_method: false
+                    client_id: ''
+                    client_secret: ''
+                    #graph_api_version: 'v20.0'
+
+                keycloak:
+                    enabled: false
+                    title: 'Keycloak'
+                    force_as_login_method: false
+                    client_id: ''
+                    client_secret: ''
+                    auth_server_url: ''
+                    realm: ''
+                    #version: ''
+
+                azure:
+                    enabled: false
+                    title: 'Azure'
+                    force_as_login_method: false
+                    client_id: ''
+                    client_secret: ''
+                    url_api: 'https://graph.microsoft.com'
+                    tenant: '6d53d383-2e87-49dd-a756-d6156a484698'
+                    force_logout: false
+                    provisioning: false
+                    update_users: false
+                    group_id:
+                        admin: ''
+                        session_admin: ''
+                        teacher: ''
+                    existing_user_verification_order: ''
+                    deactivate_nonexisting_users: false
+                    script_users_delta: false
+                    script_usergroups_delta: false
+                    group_filter_regex: ''
+
+            ldap:
+                enabled: false
+                title: 'LDAP'
+                force_as_login_method: false
+                connection_string: 'ldap://localhost:389'
+                # LDAPS (SSL port 636)  : 'ldaps://hostname:636'
+                # STARTTLS (port 389)   : 'ldap://hostname:389'  + tls_options: { x_tls_require_cert: … }
+                protocol_version: 3
+                referrals: false
+                # TLS options applied before ldap_connect() — required for ldaps:// with self-signed certs.
+                # x_tls_require_cert values: 0=never  1=hard  2=demand  3=allow(try, ignore failure)
+                # Examples:
+                #   Self-signed / internal CA, no cert check:
+                #     tls_options: { x_tls_require_cert: 0 }
+                #   Internal CA with cert file:
+                #     tls_options: { x_tls_require_cert: 2, x_tls_cacertfile: '/etc/ssl/certs/my-ca.crt' }
+                #   Public trusted CA (no extra options needed):
+                #     tls_options: {}
+                tls_options: {}
+                dn_string: '{user_identifier}'
+                query_string: null
+                base_dn: 'DC=chamilo,DC=org'
+                search_dn: 'CN=admin,dc=chamilo,dc=org'
+                search_password: 'pass'
+                filter: null
+                uid_key: 'uid'
+                password_attribute: 'userPassword'
+                # When true (default), the LDAP role is synced to Chamilo on every update (sync command, login, admin import).
+                # When false, the role is only applied when creating a new user; existing users keep their current Chamilo role.
+                synch_user_role_on_update: true
+                data_correspondence:
+                    # Each value is either:
+                    #   - an LDAP attribute name to read from the entry  (e.g. 'givenName')
+                    #   - a hardcoded value prefixed with "="            (e.g. '=ROLE_STUDENT')
+                    firstname: 'givenName'
+                    lastname: 'sn'
+                    email: 'mail'
+                    locale: null
+                    role: null
+                    phone: null
+                    active: null
+                    admin: null
+                    # Extra user fields: prefix the Chamilo field variable with "extra_".
+                    # The value is the LDAP attribute name to read from (or a hardcoded "=VALUE").
+                    # Example — sync the extra field "oauth2id" from the LDAP attribute "employeeID":
+                    #   extra_oauth2id: 'employeeID'
+                object_class: 'inetOrgPerson'
+
+            scim:
+                enabled: false
+                auth_source: ''

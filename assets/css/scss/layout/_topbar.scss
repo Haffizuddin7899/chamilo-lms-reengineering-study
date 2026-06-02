@@ -1,0 +1,203 @@
+.app-topbar {
+  @apply flex bg-white border-b border-solid border-gray-25 fixed left-0 top-0 w-full z-10 py-4;
+
+  .p-menubar {
+    @apply text-gray-90 container mx-auto;
+
+    .p-menubar-start {
+      @apply ml-4 mr-auto
+        md:ml-0;
+    }
+
+    .p-menubar-button {
+      @apply w-6 h-6 text-gray-50 mx-4 my-2 outline-none;
+
+      .p-icon {
+        @apply w-[18px] h-[18px];
+      }
+    }
+
+    &.p-menubar-mobile {
+      @apply bg-white w-full;
+
+      &.p-menubar-mobile-active {
+        .p-menubar-button {
+          .mdi.mdi-menu {
+            &::before {
+              content: "\F0156";
+            }
+          }
+        }
+      }
+
+      .p-menubar-root-list {
+        @apply pt-8;
+        height: calc(100vh - 4.5rem - 1px);
+
+        > .p-menubar-item {
+          @apply w-full px-6 pb-2 text-gray-50;
+
+          > .p-menubar-item-content .p-menubar-item-link {
+            @apply py-3 px-9
+              hover:border-l-4 hover:border-primary hover:border-solid hover:pl-8 hover:bg-support-1
+              focus:border-l-4 focus:border-primary focus:border-solid focus:pl-8 focus:bg-support-1;
+          }
+        }
+
+        > .p-menubar-item:last-child {
+          @apply border-t border-solid border-gray-25 py-5 px-6 mt-auto;
+
+          > .p-menubar-item-content .p-menubar-item-link {
+            @apply py-2 px-4 rounded-lg border-0
+              hover:bg-primary hover:text-white
+              focus:bg-primary focus:text-white;
+          }
+
+          &.p-menubar-item-active {
+            > .p-menubar-item-content .p-menubar-item-link {
+              @apply bg-primary text-white;
+            }
+          }
+        }
+
+        .p-menubar-submenu {
+          @apply absolute border-0 bottom-16 left-6;
+          width: calc(100vw - 3rem);
+        }
+      }
+    }
+  }
+
+  .p-menubar-root-list {
+    @apply bg-white top-14 mt-[1px] outline-none
+      md:justify-end grow md:flex-wrap md:items-center;
+
+    > .p-menubar-item:last-child .p-menubar-submenu {
+      @apply max-h-[15.5rem] overflow-y-auto
+        md:right-0;
+    }
+  }
+
+  .p-menubar-item-content {
+    @apply md:py-2;
+
+    .p-menubar-item-link {
+      @apply font-semibold
+        hover:outline-none hover:outline-offset-0 hover:text-primary
+        focus:outline-none focus:outline-offset-0 focus:text-primary
+        md:px-4 md:py-2 md:text-body-1;
+    }
+  }
+
+  .p-menubar-item {
+    @apply relative;
+  }
+
+  .p-menubar-submenu {
+    @apply bg-white outline-none rounded-lg shadow-xl py-3;
+
+    .p-menubar-item {
+      .p-menubar-item-content {
+        @apply md:p-0;
+
+        .p-menubar-item-link {
+          @apply bg-white text-body-1 py-2 px-4 font-normal
+            hover:bg-support-1
+            focus:bg-support-1
+            active:bg-support-1 active:text-primary;
+        }
+      }
+    }
+  }
+
+  &__start {
+    @apply ml-4 mr-auto;
+  }
+
+  &__items {
+    @apply flex grow justify-end items-center gap-6;
+
+    .item-button {
+      @apply w-8 h-8 relative text-center;
+
+      & > .base-icon > .mdi {
+        @apply text-2xl leading-6 w-6 h-6;
+      }
+
+      > .base-icon {
+        @apply w-8 h-8 items-center justify-center text-gray-50
+          hover:text-gray-90;
+      }
+
+      .base-icon__badge--top-left {
+        @apply -top-1.5 -left-2;
+      }
+
+      .mdi,
+      &__icon {
+        @apply inline-flex transition-colors align-middle;
+      }
+
+      &__badge {
+        @apply bg-error text-white rounded-full text-tiny font-semibold absolute text-center h-4 w-4 top-0 right-0;
+      }
+
+      &.router-link-exact-active .mdi {
+        @apply text-gray-90;
+      }
+    }
+  }
+
+  &__end {
+    @apply ml-6 mr-4 flex items-center gap-6;
+
+    .user-avatar {
+      @apply rounded-full w-8 h-8 text-white bg-primary leading-6 text-body-2 font-semibold;
+
+      img {
+        @apply rounded-full w-8 h-8;
+      }
+    }
+
+    .item-button {
+      @apply w-8 h-8 relative;
+
+      .mdi,
+      &__icon {
+        @apply text-gray-50 inline-flex transition-colors align-middle text-2xl leading-6 w-6 h-6
+          hover:text-gray-90;
+
+        &::before {
+          @apply text-2xl leading-6;
+        }
+      }
+    }
+  }
+
+  &__user-submenu {
+  }
+}
+
+.app-topbars .p-menubar {
+  .p-menubar-submenu {
+    .p-submenu-icon {
+    }
+
+    >.p-menubar-item:hover,
+    >.p-menubar-item:focus {
+      > .p-menubar-item-link {
+        @apply bg-support-1;
+      }
+    }
+  }
+}
+
+@media (max-width: 639px) {
+  .app-topbars .p-menubar {
+    &.p-menubar-mobile-active {
+      + .app-main {
+        @apply max-h-screen overflow-hidden;
+      }
+    }
+  }
+}

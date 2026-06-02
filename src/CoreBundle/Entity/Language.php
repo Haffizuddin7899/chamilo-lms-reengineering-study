@@ -1,0 +1,196 @@
+<?php
+
+declare(strict_types=1);
+
+/* For licensing terms, see /license.txt */
+
+namespace Chamilo\CoreBundle\Entity;
+
+use ApiPlatform\Doctrine\Orm\Filter\BooleanFilter;
+use ApiPlatform\Doctrine\Orm\Filter\OrderFilter;
+use ApiPlatform\Doctrine\Orm\Filter\SearchFilter;
+use ApiPlatform\Metadata\ApiFilter;
+use ApiPlatform\Metadata\ApiResource;
+use ApiPlatform\Metadata\Delete;
+use ApiPlatform\Metadata\Get;
+use ApiPlatform\Metadata\GetCollection;
+use ApiPlatform\Metadata\Post;
+use ApiPlatform\Metadata\Put;
+use Chamilo\CoreBundle\Entity\Listener\LanguageListener;
+use Chamilo\CoreBundle\Repository\LanguageRepository;
+use Doctrine\Common\Collections\ArrayCollection;
+use Doctrine\Common\Collections\Collection;
+use Doctrine\ORM\Mapping as ORM;
+use Symfony\Component\Serializer\Attribute\Groups;
+use Symfony\Component\Validator\Constraints as Assert;
+
+/**
+ * Platform languages.
+ */
+#[ApiResource(
+    operations: [
+        new Get(),
+        new GetCollection(),
+        new Post(security: "is_granted('ROLE_ADMIN')"),
+        new Put(security: "is_granted('ROLE_ADMIN')"),
+        new Delete(security: "is_granted('ROLE_ADMIN')"),
+    ],
+    normalizationContext: ['groups' => ['language:read']],
+    paginationEnabled: false
+)]
+#[ApiFilter(BooleanFilter::class, properties: ['available'])]
+#[ApiFilter(OrderFilter::class, properties: ['englishName' => 'DESC', 'originalName' => 'ASC'])]
+#[ApiFilter(SearchFilter::class, properties: ['isocode' => 'exact'])]
+#[ORM\Table(name: 'language', options: ['row_format' => 'DYNAMIC'])]
+#[ORM\Entity(repositoryClass: LanguageRepository::class)]
+#[ORM\EntityListeners([LanguageListener::class])]
+class Language
+{
+    public const ISO_MAX_LENGTH = 8;
+
+    #[Groups(['language:read', 'resource_node:read', 'resource_file:read', 'document:read', 'personal_file:read', 'student_publication:read', 'attendance:read', 'calendar_event:read', 'link:read'])]
+    #[ORM\Column(name: 'id', type: 'integer')]
+    #[ORM\Id]
+    #[ORM\GeneratedValue]
+    protected ?int $id = null;
+
+    #[Groups(['language:read', 'language:write', 'resource_node:read', 'resource_file:read', 'document:read', 'personal_file:read', 'student_publication:read', 'attendance:read', 'calendar_event:read', 'link:read'])]
+    #[Assert\NotBlank]
+    #[ORM\Column(name: 'original_name', type: 'string', length: 255, nullable: true)]
+    protected ?string $originalName = null;
+
+    #[Groups(['language:read', 'language:write', 'resource_node:read', 'resource_file:read', 'document:read', 'personal_file:read', 'student_publication:read', 'attendance:read', 'calendar_event:read', 'link:read'])]
+    #[Assert\NotBlank]
+    #[ORM\Column(name: 'english_name', type: 'string', length: 255)]
+    protected string $englishName;
+
+    #[Groups(['language:read', 'language:write', 'resource_node:read', 'resource_file:read', 'document:read', 'personal_file:read', 'student_publication:read', 'attendance:read', 'calendar_event:read', 'link:read'])]
+    #[Assert\NotBlank]
+    #[ORM\Column(name: 'isocode', type: 'string', length: self::ISO_MAX_LENGTH)]
+    protected string $isocode;
+
+    #[Groups(['language:read', 'language:write', 'resource_node:read', 'resource_file:read', 'document:read', 'personal_file:read', 'student_publication:read', 'attendance:read', 'calendar_event:read', 'link:read'])]
+    #[ORM\Column(name: 'available', type: 'boolean', nullable: false)]
+    protected bool $available;
+
+    #[ORM\ManyToOne(targetEntity: self::class, inversedBy: 'subLanguages')]
+    #[ORM\JoinColumn(name: 'parent_id', referencedColumnName: 'id', nullable: true)]
+    protected ?Language $parent = null;
+
+    /**
+     * @var Collection<int, self>
+     */
+    #[Groups(['language:read', 'language:write', 'resource_node:read', 'resource_file:read', 'document:read', 'personal_file:read', 'student_publication:read', 'attendance:read', 'calendar_event:read', 'link:read'])]
+    #[ORM\OneToMany(mappedBy: 'parent', targetEntity: self::class)]
+    protected Collection $subLanguages;
+
+    public function __construct()
+    {
+        $this->subLanguages = new ArrayCollection();
+    }
+
+    public function setOriginalName(string $originalName): self
+    {
+        $this->originalName = $originalName;
+
+        return $this;
+    }
+
+    public function getOriginalName(): ?string
+    {
+        return $this->originalName;
+    }
+
+    public function setEnglishName(string $englishName): self
+    {
+        $this->englishName = $englishName;
+
+        return $this;
+    }
+
+    public function getEnglishName(): string
+    {
+        return $this->englishName;
+    }
+
+    public function setIsocode(string $isocode): self
+    {
+        $this->isocode = $isocode;
+
+        return $this;
+    }
+
+    public function getIsocode(): string
+    {
+        return $this->isocode;
+    }
+
+    public function setAvailable(bool $available): self
+    {
+        $this->available = $available;
+
+        return $this;
+    }
+
+    public function getAvailable(): bool
+    {
+        return $this->available;
+    }
+
+    public function setParent(?self $parent): static
+    {
+        $this->parent = $parent;
+
+        return $this;
+    }
+
+    public function getParent(): ?static
+    {
+        return $this->parent;
+    }
+
+    /**
+     * @return Collection<int, self>
+     */
+    public function getSubLanguages(): Collection
+    {
+        return $this->subLanguages;
+    }
+
+    /**
+     * Get id.
+     */
+    public function getId(): ?int
+    {
+        return $this->id;
+    }
+
+    public function addSubLanguage(self $subLanguage): static
+    {
+        if (!$this->subLanguages->contains($subLanguage)) {
+            $this->subLanguages->add($subLanguage);
+            $subLanguage->setParent($this);
+        }
+
+        return $this;
+    }
+
+    public function removeSub(self $sub): static
+    {
+        if ($this->subLanguages->removeElement($sub)) {
+            // set the owning side to null (unless already changed)
+            if ($sub->getParent() === $this) {
+                $sub->setParent(null);
+            }
+        }
+
+        return $this;
+    }
+
+    public function generateIsoCodeForChild(): string
+    {
+        $isoCode = explode('_', $this->getParent()->getIsocode());
+
+        return $isoCode[0].'_'.$this->getId();
+    }
+}

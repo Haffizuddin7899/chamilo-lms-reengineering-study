@@ -1,0 +1,138 @@
+<?php
+/* For license terms, see /license.txt */
+
+use Chamilo\LtiBundle\Entity\ExternalTool;
+use Chamilo\PluginBundle\ImsLti\Form\FrmAdd;
+
+$cidReset = true;
+
+require_once __DIR__.'/../../main/inc/global.inc.php';
+
+api_protect_admin_script();
+
+$plugin = ImsLtiPlugin::create();
+
+$em = Database::getManager();
+
+$form = new FrmAdd('ism_lti_create_tool');
+$form->build();
+
+$keepSubmittedValues = false;
+
+if ($form->validate()) {
+    $formValues = $form->exportValues();
+
+    $normalizeOptionalValue = static function ($value): string {
+        return empty($value) ? '' : trim((string) $value);
+    };
+
+    if (ImsLti::V_1P1 === $formValues['version'] && empty($formValues['launch_url'])) {
+        Display::addFlash(
+            Display::return_message('Launch URL is required for LTI 1.0 / 1.1 tools.', 'error')
+        );
+
+        $form->setDefaults($formValues);
+        $keepSubmittedValues = true;
+    } else {
+        $externalTool = new ExternalTool();
+        $externalTool
+            ->setTitle($formValues['name'])
+            ->setDescription(
+                empty($formValues['description']) ? null : $formValues['description']
+            )
+            ->setCustomParams(
+                empty($formValues['custom_params']) ? null : $formValues['custom_params']
+            )
+            ->setDocumenTarget($formValues['document_target'] ?? 'iframe')
+            ->setActiveDeepLinking(
+                isset($formValues['deep_linking'])
+            )
+            ->setPrivacy(
+                isset($formValues['share_name']),
+                isset($formValues['share_email']),
+                isset($formValues['share_picture'])
+            );
+
+        if (!empty($formValues['replacement_user_id'])) {
+            $externalTool->setReplacementForUserId($formValues['replacement_user_id']);
+        }
+
+        if (ImsLti::V_1P3 === $formValues['version']) {
+            $externalTool
+                ->setVersion(ImsLti::V_1P3)
+                ->setLaunchUrl($normalizeOptionalValue($formValues['launch_url'] ?? ''))
+                ->setClientId(ImsLti::generateClientId())
+                ->setLoginUrl($normalizeOptionalValue($formValues['login_url'] ?? ''))
+                ->setRedirectUrl($normalizeOptionalValue($formValues['redirect_url'] ?? ''))
+                ->setAdvantageServices(
+                    [
+                        'ags' => $formValues['1p3_ags'] ?? LtiAssignmentGradesService::AGS_NONE,
+                        'nrps' => $formValues['1p3_nrps'] ?? LtiNamesRoleProvisioningService::NRPS_NONE,
+                    ]
+                )
+                ->setJwksUrl($normalizeOptionalValue($formValues['jwks_url'] ?? ''));
+
+            $externalTool->publicKey = empty($formValues['public_key'])
+                ? null
+                : $formValues['public_key'];
+        } else {
+            $externalTool->setVersion(ImsLti::V_1P1);
+
+            if (empty($formValues['consumer_key']) && empty($formValues['shared_secret'])) {
+                try {
+                    $launchUrl = $plugin->getLaunchUrlFromCartridge($formValues['launch_url']);
+                } catch (Exception $e) {
+                    Display::addFlash(
+                        Display::return_message($e->getMessage(), 'error')
+                    );
+
+                    header('Location: '.api_get_path(WEB_PLUGIN_PATH).'ImsLti/admin.php');
+                    exit;
+                }
+
+                $externalTool->setLaunchUrl($launchUrl);
+            } else {
+                $externalTool
+                    ->setLaunchUrl($formValues['launch_url'])
+                    ->setConsumerKey(
+                        empty($formValues['consumer_key']) ? null : $formValues['consumer_key']
+                    )
+                    ->setSharedSecret(
+                        empty($formValues['shared_secret']) ? null : $formValues['shared_secret']
+                    );
+            }
+        }
+
+        $em->persist($externalTool);
+        $em->flush();
+
+        Display::addFlash(
+            Display::return_message($plugin->get_lang('ToolAdded'), 'success')
+        );
+
+        header('Location: '.api_get_path(WEB_PLUGIN_PATH).'ImsLti/admin.php');
+        exit;
+    }
+}
+
+if (!$keepSubmittedValues) {
+    $form->setDefaultValues();
+}
+
+$interbreadcrumb[] = ['url' => api_get_path(WEB_CODE_PATH).'admin/index.php', 'name' => get_lang('PlatformAdmin')];
+$interbreadcrumb[] = ['url' => api_get_path(WEB_PLUGIN_PATH).'ImsLti/admin.php', 'name' => $plugin->get_title()];
+
+$pageTitle = $plugin->get_lang('AddExternalTool');
+
+$template = new Template($pageTitle);
+$template->assign('form', $form->returnForm());
+$template->assign('page_title', $pageTitle);
+$template->assign('page_description', 'Create and configure a reusable external tool for the IMS/LTI client plugin.');
+$template->assign('back_url', api_get_path(WEB_PLUGIN_PATH).'ImsLti/admin.php');
+$template->assign('back_label', 'Back to tools');
+
+$content = $template->fetch('ImsLti/view/add.tpl');
+
+$template->assign('header', $pageTitle);
+$template->assign('content', $content);
+$template->display_one_col_template();
